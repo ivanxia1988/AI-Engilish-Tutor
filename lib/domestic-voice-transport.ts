@@ -12,7 +12,7 @@ export type DomesticCallbacks = { event: (event: WireMessage) => void; level: (r
 export type DomesticDependencies = { request: <T>(path: string, body: unknown) => Promise<T>; media: () => Promise<MediaStream>; peer: () => RTCPeerConnection; socket: (url: string) => WebSocket; audio: () => HTMLAudioElement; now: () => number };
 const defaults = (): DomesticDependencies => ({ request: (path, body) => api(path, body, AbortSignal.timeout(40_000)), media: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false }), peer: () => new RTCPeerConnection(), socket: url => new WebSocket(url), audio: () => { const a = document.createElement('audio'); a.autoplay = true; return a; }, now: () => performance.now() });
 export type VoiceEventChannel = { readyState: string; send: (raw: string) => void; close: () => void };
-type Queued = { command: VoiceCommand; ackId?: string; supersededAckIds?: string[]; wire?: WireMessage };
+type Queued = { command: VoiceCommand; ackId?: string; supersededAckIds?: string[]; wire?: WireMessage; interruptsResponse?: boolean };
 
 /** The long-term provider key stays on the server. This object owns only one media connection. */
 export class DomesticVoiceTransport {
@@ -39,6 +39,8 @@ export class DomesticVoiceTransport {
   private configurationPending = false;
   private queue: Queued[] = [];
   private awaiting: Queued | null = null;
+  private responseState: 'idle' | 'pending' | 'active' | 'cancelling' = 'idle';
+  private responseTimer: ReturnType<typeof setTimeout> | null = null;
   private facts: string[] = [];
   private transcriptions = new Map<string, string>();
   private transcriptCounter = 0;
@@ -113,6 +115,13 @@ export class DomesticVoiceTransport {
       for (const id of [...(completed?.supersededAckIds || []), ...(completed?.ackId ? [completed.ackId] : [])]) this.callbacks.event({ type: 'session.thinking.appended', client_event_id: id });
       if (!this.configuredOnce) { this.configuredOnce = true; void this.activate(); }
       this.pump();
+    } else if (this.provider === 'qwen' && event.type === 'response_start') {
+      if (this.responseTimer) clearTimeout(this.responseTimer); this.responseTimer = null;
+      if (this.responseState !== 'cancelling') this.responseState = 'active';
+      this.pump();
+    } else if (this.provider === 'qwen' && event.type === 'response_done') {
+      if (this.responseTimer) clearTimeout(this.responseTimer); this.responseTimer = null;
+      this.responseState = 'idle'; this.pump();
     } else if (event.type === 'transcript') this.transcript(event);
     else if (event.type === 'audio') { if (this.mode === 'classroom') this.pcm?.playChunk(event.audio, event.sampleRate); }
     else if (event.type === 'speech_start') { this.pcm?.cancelPlayback(); this.transcriptCounter++; }
@@ -159,22 +168,43 @@ export class DomesticVoiceTransport {
     if (item.command.type === 'context') { const older = this.queue.filter(x => x.command.type === 'context'); this.queue = this.queue.filter(x => x.command.type !== 'context'); item.supersededAckIds = older.flatMap(old => [...(old.supersededAckIds || []), ...(old.ackId ? [old.ackId] : [])]); }
     this.queue.push(item); if (this.queue.length > 30) { this.fail('课堂指令积压，请结束后重新连接。'); return; } this.pump();
   }
-  private pump() { if (this.awaiting || this.stopped || !this.configuredOnce) return; const next = this.queue.shift(); if (next) this.transmit(next); }
+  private pump() {
+    if (this.awaiting || this.stopped || !this.configuredOnce) return;
+    const next = this.queue[0]; if (!next) return;
+    if (this.provider === 'qwen' && this.responseState !== 'idle') {
+      const startsResponse = next.wire?.raw ? JSON.parse(next.wire.raw).type === 'response.create' : ['speak', 'user_text', 'tool_result', 'commit'].includes(next.command.type);
+      if (startsResponse) {
+        const interrupts = next.interruptsResponse || next.command.type === 'speak' || next.command.type === 'user_text';
+        if (interrupts && this.responseState === 'active') {
+          this.responseState = 'cancelling'; this.waitForResponse();
+          for (const raw of this.protocol.commands({ type: 'cancel' })) if (typeof raw === 'string') this.sendQwen(raw);
+        }
+        // response.cancel is a request; only response.done releases the next reply.
+        return;
+      }
+    }
+    this.queue.shift(); this.transmit(next);
+  }
   private transmit(item: Queued) {
     if (this.provider !== 'qwen') {
       if (item.command.type === 'context') { this.awaiting = item; this.waitForAck(); }
       if (item.wire) this.sendWire(item.wire); if (!this.awaiting) this.pump(); return;
     }
-    if (item.wire?.raw && this.eventChannel?.readyState === 'open') { this.eventChannel.send(item.wire.raw); this.pump(); return; }
+    if (item.wire?.raw && this.eventChannel?.readyState === 'open') { this.sendQwen(item.wire.raw); this.pump(); return; }
     const frames = this.protocol.commands(item.command);
     for (let i=0; i<frames.length; i++) {
       const raw = frames[i]; if (typeof raw !== 'string') continue;
       const type = (() => { try { return JSON.parse(raw).type; } catch { return ''; } })();
-      if (type === 'session.update') { this.awaiting = item; this.waitForAck(); for (const remaining of frames.slice(i+1).reverse()) this.queue.unshift({ command: { type: 'commit' }, wire: { raw: remaining } }); this.eventChannel?.send(raw); return; }
-      if (this.eventChannel?.readyState === 'open') this.eventChannel.send(raw);
+      if (type === 'session.update') { this.awaiting = item; this.waitForAck(); for (const remaining of frames.slice(i+1).reverse()) this.queue.unshift({ command: { type: 'commit' }, wire: { raw: remaining }, interruptsResponse: item.command.type === 'speak' || item.command.type === 'user_text' }); this.sendQwen(raw); return; }
+      if (this.eventChannel?.readyState === 'open') this.sendQwen(raw);
     }
     if (!this.awaiting) this.pump();
   }
+  private sendQwen(raw: string) {
+    if (JSON.parse(raw).type === 'response.create') { this.responseState = 'pending'; this.waitForResponse(); }
+    this.eventChannel?.send(raw);
+  }
+  private waitForResponse() { if (this.responseTimer) clearTimeout(this.responseTimer); this.responseTimer = setTimeout(() => this.fail('实时回复没有得到语音服务确认，请重新连接。'), 15_000); }
   private waitForAck() { if (this.ackTimeout) clearTimeout(this.ackTimeout); this.ackTimeout = setTimeout(() => this.fail('教材配置没有得到语音服务确认，请重新连接。'), 15_000); }
   private sendWire(value: object) { if (this.socket?.readyState !== 1 || this.stopped) return; if (this.socket.bufferedAmount > 256_000) { this.fail('上传声音积压，当前线路无法及时传输，请切换网络。'); return; } this.socket.send(JSON.stringify(value)); }
   mute(value: boolean) { this.media?.getAudioTracks().forEach(track => { track.enabled = !value; }); this.pcm?.mute(value); if (this.provider !== 'qwen') this.sendWire({ type: 'voice.mute', muted: value }); }
@@ -185,6 +215,7 @@ export class DomesticVoiceTransport {
   dispose() {
     if (this.stopped) return; this.stopped = true; this.channel.readyState = 'closed'; this.queue = []; this.awaiting = null;
     if (this.timeout) clearTimeout(this.timeout); if (this.ackTimeout) clearTimeout(this.ackTimeout); if (this.pingTimer) clearInterval(this.pingTimer);
+    if (this.responseTimer) clearTimeout(this.responseTimer); this.responseState = 'idle';
     this.levelTimers.forEach(clearInterval); this.pcm?.close(); this.media?.getTracks().forEach(track => track.stop()); this.media = null;
     if (this.audio) { this.audio.pause(); this.audio.srcObject = null; } this.channels.forEach(channel => channel.close()); this.peer?.close();
     this.socket?.close(1000,'classroom ended'); void this.analyserContext?.close().catch(() => {}); this.callbacks.level('teacher',0);

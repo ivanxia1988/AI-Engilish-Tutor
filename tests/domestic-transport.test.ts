@@ -90,6 +90,10 @@ test('Qwen context updates are acknowledged in order and generated speech waits 
   assert(!server.sent.some(event => event.type === 'response.create'));
   server.receive({ type: 'session.updated', session: {} });
   assert.equal(server.sent.filter(event => event.type === 'response.create').length, 1);
+  const response = server.sent.find(event => event.type === 'response.create')!;
+  assert.equal(response.response?.instructions, server.sent.filter(event => event.type === 'session.update').at(-1)!.session.instructions);
+  assert(response.response.instructions.includes('new-task-unique'));
+  assert(response.response.instructions.includes('Ask the learner to point to the apple.'));
   assert(!server.sent.some(event => event.type === 'input_audio_buffer.commit'));
 });
 
@@ -105,6 +109,63 @@ test('superseded queued context updates are all acknowledged only once the newes
   server.receive({ type: 'session.updated', session: {} });
   const ackIds = h.events.filter(event => event.type === 'session.thinking.appended').map(event => event.client_event_id);
   assert.equal(ackIds.length, 3); assert.deepEqual(new Set(ackIds), new Set(['context_one', 'context_two', 'context_three']));
+});
+
+test('Qwen drawing feedback waits for response creation and cancellation before starting another response', async t => {
+  const h = harness(); t.after(() => h.transport.dispose());
+  await h.transport.start('classroom', context); const server = await h.ready();
+  h.send({ type: 'session.commentary.append', content: 'Can you circle the apple?' });
+  server.receive({ type: 'session.updated' });
+  assert.equal(server.sent.filter(event => event.type === 'response.create').length, 1);
+  h.send({ type: 'session.commentary.append', content: 'Can you tap the picture, or draw a circle around it?' });
+  assert.equal(server.sent.filter(event => event.type === 'session.update').length, 2);
+  assert(!server.sent.some(event => event.type === 'response.cancel'));
+  server.receive({ type: 'response.created', response: { id: 'first_response' } });
+  assert.equal(server.sent.filter(event => event.type === 'response.cancel').length, 1);
+  h.send({ type: 'session.commentary.append', content: 'You selected banana. Look for apple again.' });
+  assert.equal(server.sent.filter(event => event.type === 'response.cancel').length, 1);
+  assert.equal(server.sent.filter(event => event.type === 'session.update').length, 2);
+  server.receive({ type: 'response.done', response: { status: 'cancelled' } });
+  assert.equal(server.sent.filter(event => event.type === 'session.update').length, 3);
+  server.receive({ type: 'session.updated' });
+  assert.equal(server.sent.filter(event => event.type === 'response.create').length, 2);
+  assert.equal(server.sent.filter(event => event.type === 'session.update').length, 3);
+  server.receive({ type: 'response.created', response: { id: 'second_response' } });
+  assert.equal(server.sent.filter(event => event.type === 'response.cancel').length, 2);
+  server.receive({ type: 'response.done', response: { status: 'cancelled' } });
+  server.receive({ type: 'session.updated' });
+  assert.equal(server.sent.filter(event => event.type === 'response.create').length, 3);
+  server.receive({ type: 'response.created', response: { id: 'third_response' } });
+  server.receive({ type: 'response.done', response: { status: 'completed' } });
+  assert.equal(h.transport.channel.readyState, 'open');
+  assert.deepEqual(h.errors, []);
+});
+
+test('Qwen waits for a voice response that starts while drawing feedback configuration is pending', async t => {
+  const h = harness(); t.after(() => h.transport.dispose());
+  await h.transport.start('classroom', context); const server = await h.ready();
+  h.send({ type: 'session.commentary.append', content: 'You circled the banana. Look for the apple.' });
+  server.receive({ type: 'response.created', response: { id: 'voice_response' } });
+  server.receive({ type: 'session.updated' });
+  assert.equal(server.sent.filter(event => event.type === 'response.cancel').length, 1);
+  assert(!server.sent.some(event => event.type === 'response.create'));
+  server.receive({ type: 'response.done', response: { status: 'cancelled' } });
+  assert.equal(server.sent.filter(event => event.type === 'response.create').length, 1);
+  server.receive({ type: 'response.created', response: { id: 'feedback_response' } });
+  server.receive({ type: 'response.done', response: { status: 'completed' } });
+  assert.equal(h.transport.channel.readyState, 'open');
+  assert.deepEqual(h.errors, []);
+});
+
+test('Qwen response acknowledgement waits are bounded and release the connection', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = harness(); t.after(() => { h.transport.dispose(); t.mock.timers.reset(); });
+  await h.transport.start('classroom', context); const server = await h.ready();
+  h.send({ type: 'session.commentary.append', content: 'Ask one question.' });
+  server.receive({ type: 'session.updated' });
+  t.mock.timers.tick(15_000);
+  assert.equal(h.transport.channel.readyState, 'closed');
+  assert.deepEqual(h.errors, ['实时回复没有得到语音服务确认，请重新连接。']);
 });
 
 test('duplicate events across Qwen channels cannot switch the event channel or falsely acknowledge a later update', async t => {
@@ -200,16 +261,21 @@ test('native tool arguments for an old task are rejected before execution and a 
     }
   };
   acknowledgePendingUpdates(); await tick(); assert(states.includes('connected'));
+  server.receive({ type: 'response.created', response: { id: 'initial_response' } });
   server.receive({ type: 'response.function_call_arguments.done', call_id: 'old_tool', name: 'highlight_objects', arguments: JSON.stringify({ contextKey: 'previous-task', objectIds: ['apple'] }) });
   await tick(); assert.equal(toolCalls.length, 0);
+  assert(!server.sent.some(event => event.type === 'conversation.item.create' && event.item.call_id === 'old_tool'));
+  server.receive({ type: 'response.done', response: { status: 'completed' } });
   const rejected = server.sent.find(event => event.type === 'conversation.item.create' && event.item.call_id === 'old_tool');
   assert(rejected); assert.equal(JSON.parse(rejected.item.output).status, 'failed');
+  server.receive({ type: 'response.created', response: { id: 'tool_continuation' } });
   const matching = { type: 'response.function_call_arguments.done', call_id: 'slow_tool', name: 'highlight_objects', arguments: JSON.stringify({ contextKey: context.contextKey, objectIds: ['apple'] }) };
   server.receive(matching); server.receive(matching); await tick();
   assert.deepEqual(toolCalls, ['slow_tool']);
   client.updateContext({ ...context, contextKey: 'new-task-unique' });
   finish({ status: 'confirmed', rendered: 'circle' }); await tick();
   assert(!server.sent.some(event => event.type === 'conversation.item.create' && event.item.call_id === 'slow_tool'));
+  server.receive({ type: 'response.done', response: { status: 'completed' } });
   acknowledgePendingUpdates(); await tick();
   const staleResult = server.sent.find(event => event.type === 'conversation.item.create' && event.item.call_id === 'slow_tool');
   assert(staleResult); assert.equal(JSON.parse(staleResult.item.output).status, 'failed');

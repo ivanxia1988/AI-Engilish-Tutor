@@ -169,6 +169,14 @@ hooks/use-live-classroom.ts    React 实时课堂状态与页面清理
 lib/demo.ts                    原创 SVG 教材与演示课程
 ```
 
+## Railway 部署
+
+仓库根目录的 `Dockerfile` 与 `railway.json` 可用于 Railway 构建和部署。容器沿用 Workers 运行时，由 `scripts/start-railway.mjs` 监听 `0.0.0.0:$PORT`；健康检查为 `/api/network-check`。Railway 提供 HTTPS，启动脚本通过 `RAILWAY_PUBLIC_DOMAIN` 恢复服务端请求的公开来源。
+
+本地密钥、缓存和构建产物不会进入 Docker 构建上下文。服务端变量应在 Railway 的 Variables 中配置，不要提交到 Git。教材、设置和学习记录仍保存在访问者的浏览器中。
+
+此部署使用 Wrangler 的本地 Workers 运行时，适用于当前演示和迁移验证。Railway 不提供原 Sites 的 ChatGPT 登录网关，因此这里保持 AI 接口未登录，拒绝信任外部传入的 Sites 身份头。页面、手动备课、上传及演示练习可用；真实 AI 和实时语音需要另行接入适用于 Railway 的登录，单独配置密钥不能解锁。此容器尚不能作为正式儿童课堂服务的生产部署验收。
+
 ## 当前边界
 
 - 每次最多 12 页，单文件最多 25 MB；长教材需要先导出本轮学习的页码。

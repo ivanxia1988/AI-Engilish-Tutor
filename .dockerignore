@@ -1,0 +1,17 @@
+.git
+node_modules
+dist
+.next
+.vinext
+.wrangler
+.sites-runtime
+.agents
+.codex
+outputs
+work
+coverage
+.env*
+.dev.vars*
+*.pem
+*.tsbuildinfo
+.DS_Store
