@@ -1,0 +1,28 @@
+# Copy to .dev.vars for local development. Never commit real credentials.
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-6-astra
+OPENAI_TRANSCRIBE_MODEL=gpt-transcribe
+OPENAI_LIVE_MODEL=gpt-live-1
+OPENAI_LIVE_VOICE=gleam
+OPENAI_LIVE_BACKEND_MODEL=gpt-6-luna
+# Set true only after configuring the provider account for this children's use case.
+# This is an operator attestation, not an API that enables Zero Data Retention.
+OPENAI_CHILD_DATA_READY=false
+
+# Domestic real-time voice comparison. Leave keys blank until the corresponding
+# provider is enabled for your use case. Production: configure these only in
+# Sites server-side Secrets/environment variables; never in browser code.
+# Qwen: WebRTC direct audio. Both API key and workspace ID are required.
+DASHSCOPE_API_KEY=
+DASHSCOPE_WORKSPACE_ID=
+DASHSCOPE_REGION=cn-beijing
+QWEN_REALTIME_MODEL=qwen3.8-omni-flash-realtime
+QWEN_REALTIME_VOICE=Tina
+# Doubao Seeduplex 3.0: server WebSocket relay, new-console voice API key.
+VOLCENGINE_VOICE_API_KEY=
+DOUBAO_REALTIME_MODEL=1.2.6.1
+DOUBAO_REALTIME_VOICE=zh_female_vv_jupiter_bigtts
+# GLM: server WebSocket relay.
+ZHIPU_API_KEY=
+GLM_REALTIME_MODEL=glm-realtime-flash
+GLM_REALTIME_VOICE=tongtong

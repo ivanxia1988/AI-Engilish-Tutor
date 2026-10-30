@@ -1,0 +1,23 @@
+import type { VoiceProviderId } from './voice-provider';
+export type Point = { x: number; y: number };
+export type Box = { x: number; y: number; w: number; h: number };
+export type PageObject = { id: string; label: string; chinese: string; box: Box };
+export type BookPage = { id: string; image: string; width: number; height: number; objects: PageObject[] };
+export type LessonStep = {
+  id: string;
+  kind: "listen" | "select" | "speak";
+  pageId: string;
+  targetId: string | null;
+  english: string;
+  chinese: string;
+  hint: string;
+  expected: string | null;
+};
+export type Lesson = { id: string; title: string; subtitle: string; duration: number; words: string[]; steps: LessonStep[] };
+export type Book = { id: string; title: string; source: "demo" | "ai" | "manual"; createdAt: string; pages: BookPage[]; lessons: Lesson[] };
+export type Stroke = { id: string; pageId: string; stepId: string; points: Point[]; color: string; tool: "pen" | "circle" };
+export type Answer = { stepId: string; attempts: number; correct: boolean; assisted: boolean; answer: string };
+export type Progress = { bookId: string; lessonId: string; stepIndex: number; completed: boolean; answers: Answer[]; strokes: Stroke[]; assistedStepIds?: string[]; updatedAt: string; startedAt: string };
+export type TeacherReply = { english: string; chinese: string; highlightIds: string[]; assessment: "correct" | "retry" | "none" };
+export type Settings = { childName: string; age: number; voice: boolean; subtitles: boolean; rate: number; language: "en-US" | "zh-CN"; consent: boolean; voiceProvider?: VoiceProviderId };
+export const defaultSettings: Settings = { childName: "小小探索家", age: 7, voice: true, subtitles: false, rate: 0.82, language: "en-US", consent: false, voiceProvider: 'openai' };
