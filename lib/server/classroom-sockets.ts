@@ -119,10 +119,11 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     let gptOutputGate: { ackId?: string; acknowledged: boolean; lastOutputAt: number; quietMs: number; deadline: ReturnType<typeof setTimeout> } | undefined;
     const currentKey = () => `${lease.id}:${lease.epoch}:${stepIndex}`;
     const protocol = lease.provider === 'qwen' ? createQwenProtocol({ model: config.model, voice: config.voice }) : null;
-    type QwenQueued = { command?: VoiceCommand; raw?: string; cue: boolean; interrupts: boolean };
+    type QwenQueued = { command?: VoiceCommand; raw?: string; cue: boolean; interrupts: boolean; noReply?: boolean };
     let qwenQueue: QwenQueued[] = [], qwenAwaiting = false, qwenConfigured = false, qwenWantsCancel = false;
     let qwenVadPending = false, qwenApplicationPending = false;
     let qwenOutputAllowed = false, qwenReplyKey: string | undefined, qwenApplicationReplyKey: string | undefined, qwenVadReplyKey: string | undefined;
+    let invalidToolRecoveryKey: string | undefined;
     let qwenResponseState: 'idle' | 'pending' | 'active' | 'cancelling' = 'idle';
     let qwenAckTimer: ReturnType<typeof setTimeout> | undefined, qwenResponseTimer: ReturnType<typeof setTimeout> | undefined;
     const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -221,7 +222,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         return;
       }
       qwenQueue.shift();
-      const commands = item.raw ? [item.raw] : protocol.commands(item.command!);
+      const commands = (item.raw ? [item.raw] : protocol.commands(item.command!)).filter(raw => !item.noReply || typeof raw !== 'string' || (JSON.parse(raw) as {type:string}).type !== 'response.create');
       for (let index = 0; index < commands.length; index++) {
         const raw = commands[index]; if (typeof raw !== 'string') continue;
         const type = (JSON.parse(raw) as { type: string }).type;
@@ -236,17 +237,24 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       }
       pumpQwen();
     };
-    const enqueueQwen = (command: VoiceCommand) => {
+    const enqueueQwen = (command: VoiceCommand, noReply = false) => {
       if (!protocol || stopped) return;
       if (command.type === 'audio') { for (const raw of protocol.commands(command)) if (typeof raw === 'string') sendQwenRaw(raw); return; }
       if (command.type === 'cancel') { cancelQwenResponse(); return; }
       if (command.type === 'context') qwenQueue = qwenQueue.filter(item => item.command?.type !== 'context');
       if (command.type === 'speak' || command.type === 'tool_result') qwenQueue = qwenQueue.filter(item => !item.cue);
-      const item = { command, cue: command.type === 'speak', interrupts: command.type === 'speak' || command.type === 'user_text' };
+      const item = { command, cue: command.type === 'speak', interrupts: command.type === 'speak' || command.type === 'user_text', noReply };
       if (item.interrupts) { qwenOutputAllowed = false; clearPlayback(); }
       if (command.type === 'context') qwenQueue.unshift(item); else qwenQueue.push(item);
       if (qwenQueue.length > 30) { fail(); return; }
       pumpQwen();
+    };
+    const rejectQwenTool = (callId: string) => {
+      if (toolsSeen.has(callId)) return;
+      if (toolsSeen.size >= 250) { fail('protocol_error'); return; }
+      toolsSeen.add(callId);
+      const noReply = invalidToolRecoveryKey === currentKey(); invalidToolRecoveryKey = currentKey();
+      enqueueQwen({ type: 'tool_result', callId, output: JSON.stringify({ status: 'unavailable', english: 'The requested classroom action could not be checked. Do not claim it happened. Offer one short clarification and follow the current task without repeating this tool call.' }) }, noReply);
     };
     const speak = (cue: string) => {
       if (protocol) enqueueQwen({ type: 'speak', text: cue }); else append('commentary', cue);
@@ -421,7 +429,16 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
           }
           else if (value.type === 'transcript' && value.final) record(value.role, value.text, true, value.itemId, value.role === 'child' ? qwenSpeechKey ?? currentKey() : currentKey());
           else if (value.type === 'tool' && tools.has(value.name)) {
-            try { const args: unknown = JSON.parse(value.arguments); void transcriptChain.then(() => tool(value.callId, value.name, args)); } catch { fail(); }
+            // Cancellation can finish a partially generated function argument
+            // stream. It is a discarded tool proposal, not a broken media frame.
+            if (qwenWantsCancel || qwenResponseState === 'cancelling' || qwenResponseState === 'pending' || qwenReplyKey !== currentKey()) continue;
+            let args: unknown;
+            try { args = JSON.parse(value.arguments); }
+            catch { rejectQwenTool(value.callId); continue; }
+            if (!args || typeof args !== 'object' || Array.isArray(args) || !('contextKey' in args) || typeof args.contextKey !== 'string') { rejectQwenTool(value.callId); continue; }
+            if (args.contextKey !== currentKey()) continue;
+            const contextKey = currentKey();
+            void transcriptChain.then(() => { if (!stopped && contextKey === currentKey()) return tool(value.callId, value.name, args); });
           }
           else if (value.type === 'error') fail('provider_error');
         }

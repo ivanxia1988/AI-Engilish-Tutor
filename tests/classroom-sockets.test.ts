@@ -298,6 +298,63 @@ test('Qwen cancellation waits for response.done before creating a replacement re
   } finally { await h.close(); }
 });
 
+test('a cancelled Qwen reply with truncated tool arguments cannot close the voice connection', async () => {
+  const h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' }));
+    h.feedback('A newer application cue'); await refreshClassroom(id);
+    await waitFor(() => h.sent.some(event => event.type === 'response.cancel'));
+    h.upstream!.send(JSON.stringify({ type: 'response.function_call_arguments.done', name: 'highlight_objects', call_id: 'cancelled_partial', arguments: '{"objectIds":[' }));
+    h.upstream!.send(JSON.stringify({ type: 'response.done' }));
+    await waitFor(() => h.sent.filter(event => event.type === 'response.create').length === 2 || h.downstream.some(event => event.type === 'error'));
+    assert.equal(h.downstream.filter(event => event.type === 'error').length, 0); assert.equal(socket.readyState, WebSocket.OPEN); assert.equal(h.tools.length, 0);
+    assert(!h.sent.some(event => JSON.stringify(event).includes('cancelled_partial')));
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('invalid current Qwen tool arguments return one unavailable result without application execution or media failure', async () => {
+  const h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' }));
+    const invalid = JSON.stringify({ type: 'response.function_call_arguments.done', name: 'highlight_objects', call_id: 'invalid_current', arguments: '{"objectIds":[' });
+    h.upstream!.send(invalid); h.upstream!.send(invalid); h.upstream!.send(JSON.stringify({ type: 'response.done' }));
+    await waitFor(() => h.sent.some(event => event.type === 'conversation.item.create' && (event.item as {call_id?:string})?.call_id === 'invalid_current') || h.downstream.some(event => event.type === 'error'));
+    assert.equal(h.downstream.filter(event => event.type === 'error').length, 0); assert.equal(socket.readyState, WebSocket.OPEN); assert.equal(h.tools.length, 0);
+    const results=h.sent.filter(event=>event.type==='conversation.item.create'&&(event.item as {call_id?:string})?.call_id==='invalid_current');
+    assert.equal(results.length,1);assert.equal(JSON.parse((results[0].item as {output:string}).output).status,'unavailable');
+    await waitFor(()=>h.sent.filter(event=>event.type==='response.create').length===2);
+    h.upstream!.send(JSON.stringify({type:'response.created'}));
+    h.upstream!.send(JSON.stringify({type:'response.function_call_arguments.done',name:'highlight_objects',call_id:'invalid_retry',arguments:'null'}));
+    h.upstream!.send(JSON.stringify({type:'response.done'}));
+    await waitFor(()=>h.sent.some(event=>event.type==='conversation.item.create'&&(event.item as {call_id?:string})?.call_id==='invalid_retry'));
+    await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(h.tools.length,0);assert.equal(h.sent.filter(event=>event.type==='response.create').length,2,'invalid tool recovery cannot loop another response');
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('late Qwen tool arguments from the previous objective are discarded while the next response is pending', async () => {
+  const h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' })); h.upstream!.send(JSON.stringify({ type: 'response.done' }));
+    await new Promise(resolve=>setTimeout(resolve,5)); h.advance(); await refreshClassroom(id);
+    await waitFor(() => h.sent.filter(event=>event.type==='response.create').length===2);
+    h.upstream!.send(JSON.stringify({ type: 'response.function_call_arguments.done', name: 'highlight_objects', call_id: 'obsolete_partial', arguments: '{"objectIds":[' }));
+    await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(h.downstream.filter(event=>event.type==='error').length,0);assert.equal(h.tools.length,0);
+    assert(!h.sent.some(event=>JSON.stringify(event).includes('obsolete_partial')));
+    h.upstream!.send(JSON.stringify({type:'response.created'}));
+    h.upstream!.send(JSON.stringify({type:'response.function_call_arguments.done',name:'highlight_objects',call_id:'obsolete_valid_json',arguments:JSON.stringify({contextKey:`${id}:1:0`,objectIds:['apple']})}));
+    await new Promise(resolve=>setTimeout(resolve,20));assert.equal(h.tools.length,0);
+    assert(!h.sent.some(event=>JSON.stringify(event).includes('obsolete_valid_json')));
+    socket.send(JSON.stringify({type:'close'}));await once(socket,'close');
+  } finally {await h.close();}
+});
+
 test('Qwen create-to-created window holds new cues and keeps only the latest pending replacement', async () => {
   const h = await harness('qwen', { delayedResponses: true });
   try {
@@ -340,6 +397,24 @@ test('connection failures carry safe layer codes instead of resembling an intent
       assert(!h.downstream.some(event => event.type === 'snapshot' && (event.classroom as ClassroomSnapshot).status === 'paused'));
     } finally { await h.close(); }
   }
+});
+
+test('normal 100ms PCM captured in bounded 450ms browser batches survives sixty seconds across receive windows', {timeout:5000}, async t => {
+  const h=await harness('qwen',{heartbeatMs:60000});
+  try {
+    const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));
+    const base=Date.now();let clock=base,capturedAt=100,frames=0;
+    t.mock.method(Date,'now',()=>clock);
+    for(const arrival of [...Array.from({length:133},(_,i)=>(i+1)*450),60000]){
+      clock=base+arrival;
+      while(capturedAt<=arrival){assert(arrival-capturedAt<=450);socket.send(JSON.stringify({type:'audio',audio:Buffer.alloc(3200).toString('base64')}));capturedAt+=100;frames++;}
+      const until=performance.now()+1000;
+      while(h.sent.filter(event=>event.type==='input_audio_buffer.append').length<frames&&!h.downstream.some(event=>event.type==='error')){if(performance.now()>until)throw Error('Bounded PCM batch was not forwarded');await new Promise(resolve=>setTimeout(resolve,2));}
+      assert.equal(h.downstream.filter(event=>event.type==='error').length,0);
+    }
+    assert.equal(frames,600);assert.equal(socket.readyState,WebSocket.OPEN);
+    t.mock.restoreAll();socket.send(JSON.stringify({type:'close'}));await once(socket,'close');
+  }finally{t.mock.restoreAll();await h.close();}
 });
 
 test('GPT context appends contain only compact facts and every append stays within a conservative UTF8 bound', async () => {
