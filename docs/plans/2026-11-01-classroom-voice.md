@@ -54,3 +54,12 @@ npm run typecheck
 委派先静默确认等待，只有聚合证据成功落库后才调用根工具；contextKey在发言/委派接收时绑定，换题清除旧聚合和等待委派。Qwen继续使用官方completed ASR事件，先await其落库再处理后续native tool。显式typed输入也单独标source:typed落库后再转发，不用来声称发音质量。transcript契约带必填contextKey/source，根PG按当前课堂任务再校验。
 
 新增5项接缝验证：片段/委派不误作final、PCM边界聚合含晚到后缀、换题丢弃、typed先落库、Qwen completed先落库。相关检查现为38项通过，仍全部使用本机受控fakeupstream；不冒充真实供应商听感验收。
+
+## 回复生命周期与GPT上下文上限修正
+
+主目录真实联网发现两处协议接缝后，本worktree补充失败测试并修正：
+
+- 通义使用idle/pending/active/cancelling四状态队列。response.create发送即进入pending，等待response.created；取消请求后等待response.done才允许下一条create。两个等待窗口及配置回执均有15秒超时。普通教学cue只保留最新的待发项，权威context优先更新，工具输出保留；取消立即清浏览器播放并丢弃取消中的旧音频，避免重叠和旧问题继续播放。
+- GPT每次thinking append复用contextChunks，按480 UTF8字节保守分块；commentary复用spokenUpdate。更新仅携带contextKey、版本、当前题、对象和确认反馈，不重发静态系统规则；当前题英语直接放在新的发声提示前部，避免静默上下文尚未注入时老师缺少新问题。此约束来自官方单append 500 tokens上限，而不是字符数上限。
+
+新增5项回归覆盖延迟response.created、取消确认前禁止重建、回复确认缺失超时、UTF8分块/静态规则不重复，以及新题cue明确含实际问题。相关检查43项通过；真实供应商联网结果仍由主目录记录，不把fakeupstream冒充联网验收。

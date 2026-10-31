@@ -7,12 +7,14 @@ import { attachClassroomSockets, type VoiceLease } from '../lib/server/classroom
 import type { ClassroomSnapshot } from '../lib/classroom-contract';
 
 const id = '6e98bb60-4ed0-4c64-bcbc-174d5dcb26c2';
-const snapshot = { id, revision: 1, stepIndex: 0, connectionEpoch: 1, status: 'active', preferences: { voice: 'female' } } as ClassroomSnapshot;
+const snapshot = { id, revision: 1, stepIndex: 0, connectionEpoch: 1, status: 'active', preferences: { voice: 'female' }, teacherObjectIds: [], feedback: null,
+  course: { id: 'picnic', version: '1', title: 'Picnic', pages: [{ id: 'page-1', objects: [{ id: 'apple', label: 'apple', chinese: '苹果' }] }], steps: [{ id: 'find-apple', kind: 'select', pageId: 'page-1', english: 'Find the apple.' }, { id: 'say-banana', kind: 'speak', pageId: 'page-1', english: 'Say the banana.' }] },
+} as unknown as ClassroomSnapshot;
 const waitFor = async (condition: () => boolean) => {
   const end = Date.now() + 2000;
   while (!condition()) { if (Date.now() >= end) throw new Error('Expected socket event did not arrive.'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
-async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean } = {}) {
+async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string } = {}) {
   const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp });
   const sent: Record<string, unknown>[] = [], downstream: Record<string, unknown>[] = [], transcripts: unknown[] = [], tools: unknown[] = [];
   let upstream: WebSocket | undefined, opened = 0, released = 0, heartbeatAllowed = true, current = snapshot, resolveTool: (() => void) | undefined, resolveTranscript: (() => void) | undefined, persistedStarts = 0;
@@ -22,6 +24,9 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
       const event = JSON.parse(data.toString()); sent.push(event);
       if (extra.autoReady === false) return;
       if (provider === 'qwen' && event.type === 'session.update') socket.send(JSON.stringify({ type: 'session.updated' }));
+      if (provider === 'qwen' && event.type === 'response.create' && !extra.delayedResponses) {
+        socket.send(JSON.stringify({ type: 'response.created' })); socket.send(JSON.stringify({ type: 'response.done' }));
+      }
       if (provider === 'openai' && event.type === 'session.start') socket.send(JSON.stringify({ type: 'session.started', session: { id: 'voice_session' } }));
       if (event.type === 'session.close') socket.send(JSON.stringify({ type: 'session.closed' }));
     });
@@ -32,10 +37,10 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
   const app = createServer();
   const lease: VoiceLease = {
     id, epoch: 1, provider, instructions: 'Current verified task: find apple.', initialCue: 'Can you find the apple?', remainingMs: extra.remainingMs ?? 60000, snapshot, ...(extra.voice ? { voice: extra.voice } : {}),
-    async heartbeat() { return heartbeatAllowed ? { snapshot: current, instructions: 'Current verified task: say apple.' } : null; },
+    async heartbeat() { return heartbeatAllowed ? { snapshot: current, instructions: extra.instructions ?? current.feedback?.message ?? 'Current verified task: say apple.' } : null; },
     async started(sessionId) { assert.equal(sessionId, 'voice_session'); if (extra.startedFails) throw new Error('fixture persistence unavailable'); persistedStarts++; },
     async transcript(event) { if (extra.delayedTranscript) await new Promise<void>(resolve => { resolveTranscript = resolve; }); transcripts.push(event); },
-    async tool(name, args) { tools.push({ name, args, finalEvidence: transcripts.filter(event => (event as { final?: boolean }).final) }); if (extra.delayedTool) await new Promise<void>(resolve => { resolveTool = resolve; }); return { output: { status: 'confirmed', english: 'The application confirms the selected apple.' }, snapshot: current }; },
+    async tool(name, args) { tools.push({ name, args, finalEvidence: transcripts.filter(event => (event as { final?: boolean }).final) }); if (extra.delayedTool) await new Promise<void>(resolve => { resolveTool = resolve; }); return { output: { status: 'confirmed', english: extra.spokenResult ?? 'The application confirms the selected apple.' }, snapshot: current }; },
     async closed() { released++; },
   };
   const controller = attachClassroomSockets(app, {
@@ -43,7 +48,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
     open: async () => { opened++; return lease; },
     config: () => ({ key: 'non-production-fixture', model: provider === 'qwen' ? 'qwen3.8-omni-flash-realtime' : 'gpt-live-1', voice: 'Tina', workspaceId: 'workspace', region: 'cn-beijing', childDataReady: true }),
     connect: () => new WebSocket(`ws://127.0.0.1:${vendorAddress.port}`),
-    heartbeatMs: 25, startupMs: extra.startupMs ?? 1000, closeMs: 30, utteranceSettleMs: 20,
+    heartbeatMs: 25, startupMs: extra.startupMs ?? 1000, closeMs: 30, utteranceSettleMs: 20, responseAckMs: extra.responseAckMs ?? 1000,
   });
   app.listen(0, '127.0.0.1'); await once(app, 'listening');
   const address = app.address(); assert(address && typeof address !== 'string');
@@ -53,7 +58,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
     socket.on('message', data => downstream.push(JSON.parse(data.toString())));
     return socket;
   };
-  return { connect, sent, downstream, transcripts, tools, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1 }; }, feedback: () => { current = { ...snapshot, revision: 2, feedback: { id: 'feedback_1', kind: 'retry', message: 'Try once more.' } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
+  return { connect, sent, downstream, transcripts, tools, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1 }; }, feedback: (message = 'Try once more.') => { current = { ...current, revision: current.revision + 1, feedback: { id: `feedback_${current.revision + 1}`, kind: 'retry', message } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
 }
 
 function pcmFrame(voiced: boolean) {
@@ -259,6 +264,77 @@ test('Qwen completed ASR persists its captured task before the following native 
     h.resolveTranscript(); await waitFor(() => h.tools.length === 1);
     const evidence = (h.tools[0] as { finalEvidence: { text: string; contextKey: string; source: string }[] }).finalEvidence;
     assert.equal(evidence[0].contextKey, `${id}:1:0`); assert.equal(evidence[0].source, 'speech'); assert.equal(evidence[0].text, 'Apple.');
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('Qwen cancellation waits for response.done before creating a replacement reply', async () => {
+  const h = await harness('qwen', { delayedResponses: true });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' })); h.feedback('replacement cue');
+    await waitFor(() => h.sent.some(event => event.type === 'response.cancel'));
+    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: 'AAAA' }));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(h.sent.filter(event => event.type === 'response.create').length, 1);
+    assert.equal(h.downstream.filter(event => event.type === 'audio').length, 0);
+    assert(h.downstream.some(event => event.type === 'interrupt'));
+    h.upstream!.send(JSON.stringify({ type: 'response.done' }));
+    await waitFor(() => h.sent.filter(event => event.type === 'response.create').length === 2);
+    assert.equal(socket.readyState, WebSocket.OPEN);
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('Qwen create-to-created window holds new cues and keeps only the latest pending replacement', async () => {
+  const h = await harness('qwen', { delayedResponses: true });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.feedback('first pending cue'); await waitFor(() => h.sent.some(event => event.type === 'session.update' && JSON.stringify(event).includes('first pending cue')));
+    h.feedback('latest pending cue'); await waitFor(() => h.sent.some(event => event.type === 'session.update' && JSON.stringify(event).includes('latest pending cue')));
+    assert.equal(h.sent.filter(event => event.type === 'response.create').length, 1);
+    h.upstream!.send(JSON.stringify({ type: 'response.created' }));
+    await waitFor(() => h.sent.some(event => event.type === 'response.cancel'));
+    h.upstream!.send(JSON.stringify({ type: 'response.done' })); await waitFor(() => h.sent.filter(event => event.type === 'response.create').length === 2);
+    const response = h.sent.filter(event => event.type === 'response.create')[1];
+    assert(JSON.stringify(response).includes('latest pending cue')); assert(!JSON.stringify(response).includes('first pending cue'));
+    assert.equal(h.downstream.filter(event => event.type === 'error').length, 0);
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('Qwen missing response.created acknowledgement times out visibly and releases the billed connection', async () => {
+  const h = await harness('qwen', { delayedResponses: true, responseAckMs: 60 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    await waitFor(() => h.released === 1);
+    assert(h.downstream.some(event => event.type === 'error')); assert.notEqual(h.upstream!.readyState, WebSocket.OPEN);
+  } finally { await h.close(); }
+});
+
+test('GPT context appends contain only compact facts and every append stays within a conservative UTF8 bound', async () => {
+  const h = await harness('openai', { instructions: 'STATIC_RULE_DO_NOT_RESEND '.repeat(200), spokenResult: '这是一个较长的确认。'.repeat(100) });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    h.feedback('这是已确认的课堂反馈。'.repeat(100));
+    await waitFor(() => h.downstream.some(event => event.type === 'snapshot' && (event.classroom as ClassroomSnapshot).revision === 2));
+    socket.send(JSON.stringify({ type: 'text', text: 'Apple.' })); await waitFor(() => h.tools.length === 1);
+    await waitFor(() => h.sent.some(event => event.type === 'session.commentary.append' && String(event.content).includes('较长')));
+    const appends = h.sent.filter(event => String(event.type).endsWith('.append'));
+    for (const event of appends) assert(Buffer.byteLength(String(event.content), 'utf8') <= 480);
+    const content = appends.map(event => String(event.content)).join('');
+    assert(!content.includes('STATIC_RULE_DO_NOT_RESEND')); assert(content.includes(`${id}:1:0`));
+    assert(content.includes('Find the apple.'));
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('GPT task-change commentary contains the actual current question before quiet context acknowledgements', async () => {
+  const h = await harness('openai');
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    h.advance(); await waitFor(() => h.sent.some(event => event.type === 'session.commentary.append' && String(event.content).includes('Say the banana.')));
+    assert.equal(h.downstream.filter(event => event.type === 'error').length, 0);
     socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
   } finally { await h.close(); }
 });
