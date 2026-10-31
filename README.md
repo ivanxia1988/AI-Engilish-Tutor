@@ -16,7 +16,9 @@
 
 ## 真实账号后端
 
-已实现正式 `/api/v1` 账号闭环、邀请码批量私有导出/停用、受保护 `/onboarding` 与 `/courses`。目前课程未发布，因此正式课程列表是真实空状态；课堂、额度和报告仍待后续接入。Railway Docker配置改为正式Node并含预部署迁移和数据库健康检查，线上尚未发布。
+已实现正式 `/api/v1` 账号闭环、邀请码批量私有导出/停用、受保护 `/onboarding`、`/courses` 与 `/classroom/:id`。本地已发布一节野餐试上课并接通真实语音、互动、暂停与结束保存；详细报告仍未开放。Railway Docker配置使用正式Node并含预部署迁移和数据库健康检查，线上尚未发布。
+
+最新启动方式及验证边界以[真实课堂运行说明](docs/backend/classrooms.md)为准。
 
 运行配置、管理命令、既有Resend域名与上线边界见[真实账号运行说明](docs/backend/accounts.md)；实现、worktree及检查见[后端实施记录](docs/plans/2026-10-31-real-account-backend.md)。协议为[试用审阅稿](docs/product/user-agreement-review.md)，批准版本未配置时不开放真实注册。
 

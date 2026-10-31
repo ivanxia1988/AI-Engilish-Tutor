@@ -18,7 +18,7 @@
 | [前端原型计划与验证](../plans/2026-10-30-frontend-prototype.md) | `/prototype` 的27个有效页面状态、电脑/平板布局、模拟边界和实际验证记录。 |
 | [重构技术架构方案](../plans/2026-10-31-teeko-architecture-design.md) | Railway已由用户选定；Node账号、PG事务与正式账号页面已本地验证，课堂/报告及线上部署仍待完成。 |
 
-当前真实账号后端的运行、发码和线上配置见[账号运行说明](../backend/accounts.md)。
+当前真实账号后端的运行、发码和线上配置见[账号运行说明](../backend/accounts.md)。正式课程、语音和本机整课验收见[课堂运行说明](../backend/classrooms.md)。
 
 ## 状态与优先级
 

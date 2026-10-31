@@ -73,3 +73,11 @@
 - 发码CLI无公网接口，明文仅私有0600 CSV，源码/public/符号链接绕行均拒绝；.private忽略且不进Docker。脚本失败只能输出非秘密元数据，不能回显OTP、密码、邀请码明文或连接串。
 - PG集成测试只允许loopback临时测试库，生产/远程URL必须在任何迁移/TRUNCATE前拒绝；测试schema/CSV/进程需清理。实际Node生产Cookie/页面守卫与真实收件分别验收。
 - 当前完成本地实现/验证，未push/部署/创建RailwayPG，详见docs/backend/accounts.md。
+
+## 真实课堂切片（2026-11-01最新）
+
+- /courses已读取一节PG版本化picnic试上课，/classroom/:id是正式账号课堂；报告仍明确未开放。新版Node入口为scripts/serve-node.mjs，WS使用/ws/classrooms/:id避开Next自动关闭已匹配API路由的upgrade。
+- Classrooms以PG及严格任务contextKey为准，HTTP与Node owner通过仅含ID的刷新通知同步；进程Map不是持久事实。当前按单Node实例工作，多副本需另做owner路由。
+- 完整、同代次的真实输入先记录再校验，不依赖模型自行评分或调用工具。否定/歧义不通过，跳过不记掌握，Stop/Pause暂停；GPT应用话轮边界不冒称官方final事件。
+- 通义需处理配置/应用回复/取消及VAD自动回复的各自确认窗口；GPT运行时append分块且只更新精简事实。音频、实际播放与配置回执区分，不缓存或重播旧题声音。
+- 用户已验收本地账号，8080验收库与.private配置必须保留；新测试用loopback隔离schema，别清空真实账号。源码/文档/日志不含密钥、验证码或录音。详见docs/backend/classrooms.md。
