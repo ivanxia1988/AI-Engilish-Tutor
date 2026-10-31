@@ -103,6 +103,16 @@ test('real classroom persistence, concurrency, evidence and bounded leases', {sk
     const missing=await f.service.tool(f.owner,c.id,lease.epoch,lease.ownerToken,'submit_spoken_answer',{answer:'an apple'});
     assert.equal(missing.output.status,'retry');assert.equal(missing.snapshot.stepIndex,1);
   });
+  await t.test('an explicit completed request to stop pauses instead of demanding the answer again',async t=>{
+    const f=await fixture(t);const c=await f.service.create(f.owner,'picnic');const lease=await f.service.claim(f.owner,c.id);
+    await f.service.receiveTranscript(f.owner,c.id,lease.epoch,lease.ownerToken,{contextKey:`${c.id}:${lease.epoch}:0`,role:'child',text:'Please stop.',final:true,itemId:'stop'});
+    const state=await f.service.get(f.owner,c.id);assert.equal(state.status,'paused');assert.equal(state.outcomes.length,0);
+  });
+  await t.test('a completed explicit request to skip is respected by the application for either provider',async t=>{
+    const f=await fixture(t);const c=await f.service.create(f.owner,'picnic');const lease=await f.service.claim(f.owner,c.id);
+    await f.service.receiveTranscript(f.owner,c.id,lease.epoch,lease.ownerToken,{contextKey:`${c.id}:${lease.epoch}:0`,role:'child',text:'Can we skip this?',final:true,itemId:'skip'});
+    const state=await f.service.get(f.owner,c.id);assert.equal(state.stepIndex,1);assert.equal(state.outcomes[0].status,'skipped');
+  });
   await t.test('usage is assigned to actual local calendar intervals and an old classroom cannot bypass a new daily cap',async t=>{
     const f=await fixture(t);f.advance(new Date('2026-11-01T15:59:55Z').getTime()-f.options.now().getTime());
     const c=await f.service.create(f.owner,'picnic');const lease=await f.service.claim(f.owner,c.id);

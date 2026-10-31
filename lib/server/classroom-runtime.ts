@@ -7,6 +7,7 @@ import { publishTrialCourses } from './course-catalog';
 import { createClassroomHandler } from './classroom-http';
 import type { ClassroomSnapshot } from '../classroom-contract';
 import type { VoiceLease } from './classroom-sockets';
+import { refreshClassroom } from './classroom-events';
 
 let service:ClassroomService|undefined;
 let publishing:Promise<void>|undefined;
@@ -25,7 +26,7 @@ export function classroomProviders(){
 export async function handleClassroomRequest(request:Request){
   try{
     const origin=accountOrigin(),accounts=getAccountService();
-    return await createClassroomHandler({origin,service:await getClassroomService(),authenticate:req=>accounts.session(accountCookie(req,'teeko_session')),providers:classroomProviders,limit:id=>accounts.limit(`classroom-http:${id}`,90,60)})(request);
+    return await createClassroomHandler({origin,service:await getClassroomService(),authenticate:req=>accounts.session(accountCookie(req,'teeko_session')),providers:classroomProviders,limit:id=>accounts.limit(`classroom-http:${id}`,90,60),changed:refreshClassroom})(request);
   }catch{return Response.json({ok:false,error:{code:'UNAVAILABLE',message:'课堂服务暂时不可用，请稍后重试。'}},{status:503,headers:{'Cache-Control':'no-store'}});}
 }
 export function classroomInstructions(snapshot:ClassroomSnapshot){
@@ -51,8 +52,8 @@ export async function openClassroomVoice(request:Request,id:string):Promise<Voic
     remainingMs:lease.snapshot.remainingSeconds*1000,snapshot:lease.snapshot,
     started:async sessionId=>{await service.providerStarted(user.id,id,lease.epoch,lease.ownerToken,sessionId);},
     heartbeat:async()=>{if(!await active())return null;const snapshot=await service.heartbeat(user.id,id,lease.epoch,lease.ownerToken);return snapshot?{snapshot,instructions:classroomInstructions(snapshot)}:null;},
-    transcript:async event=>{if(await active())await service.receiveTranscript(user.id,id,lease.epoch,lease.ownerToken,event);},
-    tool:async(name,args)=>{if(!await active())throw new ClassroomError('UNAUTHORIZED','登录已失效。',401);return service.tool(user.id,id,lease.epoch,lease.ownerToken,name,args);},
+    transcript:async event=>{if(await active()){await service.receiveTranscript(user.id,id,lease.epoch,lease.ownerToken,event);if(event.role==='child'&&event.final)await refreshClassroom(id);}},
+    tool:async(name,args)=>{if(!await active())throw new ClassroomError('UNAUTHORIZED','登录已失效。',401);const result=await service.tool(user.id,id,lease.epoch,lease.ownerToken,name,args);await refreshClassroom(id);return result;},
     closed:async()=>{await service.release(user.id,id,lease.epoch,lease.ownerToken);},
   };
 }

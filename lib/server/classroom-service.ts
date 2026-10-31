@@ -163,7 +163,16 @@ export class ClassroomService {
   /** Vendor tool adherence is optional; only completed, task-bound evidence can progress. */
   async receiveTranscript(accountId:string,id:string,epoch:number,token:string,event:Transcript){
     await this.transcript(accountId,id,epoch,token,event);
-    if(event.role==='child'&&event.final&&event.contextKey)await this.tool(accountId,id,epoch,token,'submit_spoken_answer',{contextKey:event.contextKey,answer:event.text});
+    if(event.role!=='child'||!event.final||!event.contextKey)return;
+    const input=normalize(event.text);
+    const control=/^(?:(?:please|can we|let s) )?(?:stop|pause)(?: please)?$|^(?:暂停|停一下|停止)$/.test(input)?'pause'
+      :/^(?:please )?(?:skip|next)(?: this| one| question| please)?$|^(?:can we|let s) skip(?: this)?$|^(?:跳过|换一题|不想重复了)$/.test(input)?'skip':null;
+    if(control){
+      const state=await this.get(accountId,id);
+      if(state.status==='active'&&state.connectionEpoch===epoch&&event.contextKey===`${id}:${epoch}:${state.stepIndex}`)await this.action(accountId,id,{eventId:randomUUID(),expectedRevision:state.revision,type:control});
+      return;
+    }
+    await this.tool(accountId,id,epoch,token,'submit_spoken_answer',{contextKey:event.contextKey,answer:event.text});
   }
   async tool(accountId:string,id:string,epoch:number,token:string,name:string,args:unknown):Promise<{output:{status:string;english?:string;highlighted?:string[]};snapshot:ClassroomSnapshot}>{return this.tx(accountId,async db=>{
     const row=await this.row(db,accountId,id);await this.settle(db,row);

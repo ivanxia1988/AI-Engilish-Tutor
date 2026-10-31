@@ -9,7 +9,7 @@ const actionSchema=z.object({eventId:z.string().uuid(),expectedRevision:z.number
 const classroomPath=/^\/classrooms\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/actions)?$/i;
 export function isClassroomApi(path:string){return ['/api/v1/courses','/api/v1/classroom-options','/api/v1/preferences','/api/v1/classrooms'].includes(path)||path.startsWith('/api/v1/classrooms/');}
 type Provider={id:'qwen'|'openai';name:string;configured:boolean};
-type Dependencies={origin:string;service:ClassroomService;authenticate:(request:Request)=>Promise<{id:string;profileComplete:boolean}|null>;providers:()=>Provider[];limit:(accountId:string)=>Promise<void>};
+type Dependencies={origin:string;service:ClassroomService;authenticate:(request:Request)=>Promise<{id:string;profileComplete:boolean}|null>;providers:()=>Provider[];limit:(accountId:string)=>Promise<void>;changed?:(id:string)=>Promise<void>};
 export function createClassroomHandler(deps:Dependencies){return async(request:Request)=>{
   try{
     const path=new URL(request.url).pathname.replace(/^\/api\/v1/,'');
@@ -38,7 +38,11 @@ export function createClassroomHandler(deps:Dependencies){return async(request:R
       if(!deps.providers().some(provider=>provider.id===preferences.provider&&provider.configured))throw new ClassroomError('VOICE_UNAVAILABLE','所选语音服务尚未配置，请选择可用的服务。',503);
       return accountResponse({ok:true,classroom:await deps.service.create(user.id,data.courseId,preferences)});
     }
-    if(match?.[2])return accountResponse({ok:true,classroom:await deps.service.action(user.id,match[1],actionSchema.parse(body))});
+    if(match?.[2]){
+      const classroom=await deps.service.action(user.id,match[1],actionSchema.parse(body));
+      await deps.changed?.(match[1]);
+      return accountResponse({ok:true,classroom});
+    }
     throw new ClassroomError('METHOD','不支持此请求方式。',405);
   }catch(error){
     if(error instanceof z.ZodError)return accountResponse({ok:false,error:{code:'INVALID_INPUT',message:'请求内容无效，请重新操作。'}},400);

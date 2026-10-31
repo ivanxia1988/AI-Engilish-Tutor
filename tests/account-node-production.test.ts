@@ -11,6 +11,7 @@ import { Pool } from 'pg';
 import { ACCOUNT_TERMS_VERSION } from '../lib/account-terms.ts';
 import { migrateAccounts } from '../scripts/migrate-accounts.mjs';
 import { AccountService } from '../lib/server/account-service.ts';
+import { coursesResponse } from '../components/product/classroom-request.ts';
 
 const database = process.env.TEST_ACCOUNT_DATABASE_URL;
 const enabled = process.env.TEEKO_ACCOUNT_NODE_SMOKE === '1';
@@ -96,7 +97,9 @@ test('actual Node production authenticates durable accounts, guards profile rout
   const saved = await request('/api/v1/profile', profile, cookie, 'PATCH');
   assert.equal(saved.status, 200); assert.deepEqual(await saved.json(), { ok: true, profile });
   assert.equal((await request('/courses', undefined, cookie)).status, 200);
-  assert.deepEqual(await (await request('/api/v1/courses', undefined, cookie)).json(), { ok: true, courses: [] });
+  const catalog=coursesResponse.parse(await (await request('/api/v1/courses', undefined, cookie)).json());
+  assert.equal(catalog.ok,true);assert.equal(catalog.courses.length,1);
+  assert.equal(catalog.courses[0].id,'picnic');assert.equal(catalog.activeClassroom,null);
   await stopProcess(child); await start();
   const state = await request('/api/v1/auth/state', undefined, cookie);
   assert.equal(state.status, 200);
