@@ -6,6 +6,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { attachClassroomSockets, type VoiceLease } from '../lib/server/classroom-sockets';
 import type { ClassroomSnapshot } from '../lib/classroom-contract';
 import { refreshClassroom } from '../lib/server/classroom-events';
+import type { PcmOutputClock } from '../lib/server/classroom-audio';
 
 const id = '6e98bb60-4ed0-4c64-bcbc-174d5dcb26c2';
 const snapshot = { id, revision: 1, stepIndex: 0, connectionEpoch: 1, status: 'active', preferences: { voice: 'female' }, teacherObjectIds: [], feedback: null,
@@ -15,7 +16,7 @@ const waitFor = async (condition: () => boolean) => {
   const end = Date.now() + 2000;
   while (!condition()) { if (Date.now() >= end) throw new Error('Expected socket event did not arrive.'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
-async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean } = {}) {
+async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; audioClock?: PcmOutputClock } = {}) {
   const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp });
   const sent: Record<string, unknown>[] = [], downstream: Record<string, unknown>[] = [], transcripts: unknown[] = [], tools: unknown[] = [];
   let upstream: WebSocket | undefined, opened = 0, released = 0, heartbeatAllowed = true, current = snapshot, resolveTool: (() => void) | undefined, resolveTranscript: (() => void) | undefined, persistedStarts = 0;
@@ -58,6 +59,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
     config: () => ({ key: 'non-production-fixture', model: provider === 'qwen' ? 'qwen3.8-omni-flash-realtime' : 'gpt-live-1', voice: 'Tina', workspaceId: 'workspace', region: 'cn-beijing', childDataReady: true }),
     connect: () => new WebSocket(`ws://127.0.0.1:${vendorAddress.port}`),
     heartbeatMs: extra.heartbeatMs ?? 25, startupMs: extra.startupMs ?? 1000, closeMs: 30, utteranceSettleMs: 20, responseAckMs: extra.responseAckMs ?? 1000,
+    audioClock: extra.audioClock,
   });
   app.listen(0, '127.0.0.1'); await once(app, 'listening');
   const address = app.address(); assert(address && typeof address !== 'string');
@@ -283,7 +285,7 @@ test('Qwen cancellation waits for response.done before creating a replacement re
     const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
     h.upstream!.send(JSON.stringify({ type: 'response.created' })); h.feedback('replacement cue');
     await waitFor(() => h.sent.some(event => event.type === 'response.cancel'));
-    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: 'AAAA' }));
+    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: 'AAAAAA==' }));
     await new Promise(resolve => setTimeout(resolve, 30));
     assert.equal(h.sent.filter(event => event.type === 'response.create').length, 1);
     assert.equal(h.downstream.filter(event => event.type === 'audio').length, 0);
@@ -398,7 +400,7 @@ test('Qwen VAD end reserves the automatic response before final ASR refresh can 
     assert.equal(h.sent.filter(event => event.type === 'response.create').length, 1);
     h.upstream!.send(JSON.stringify({ type: 'response.done' })); await waitFor(() => h.sent.filter(event => event.type === 'response.create').length === 2);
     h.upstream!.send(JSON.stringify({ type: 'response.created' }));
-    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: 'AAAA' })); await waitFor(() => h.downstream.some(event => event.type === 'audio'));
+    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: 'AAAAAA==' })); await waitFor(() => h.downstream.some(event => event.type === 'audio'));
     assert.equal(h.downstream.filter(event => event.type === 'error').length, 0);
     socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
   } finally { await h.close(); }
@@ -428,5 +430,55 @@ test('Qwen automatic VAD response missing its created acknowledgement also has a
     h.upstream!.send(JSON.stringify({ type: 'input_audio_buffer.speech_started' })); h.upstream!.send(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }));
     await waitFor(() => h.released === 1 && h.downstream.some(event => event.type === 'error'));
     assert.notEqual(h.upstream!.readyState, WebSocket.OPEN);
+  } finally { await h.close(); }
+});
+
+function outputClock() {
+  let time = 0, nextId = 0;
+  const timers = new Map<number, { at: number; callback: () => void }>();
+  const clock: PcmOutputClock = { now: () => time, schedule: (callback, milliseconds) => { const id = ++nextId; timers.set(id, { at: time + milliseconds, callback }); return id; }, cancel: handle => { timers.delete(handle as number); } };
+  return { clock, timers, advance(milliseconds: number) {
+    const end = time + milliseconds;
+    for (;;) { const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0]; if (!next || next[1].at > end) break; timers.delete(next[0]); time = Math.max(time, next[1].at); next[1].callback(); }
+    time = end;
+  } };
+}
+
+test('both providers pace burst audio to the consumer clock rather than forwarding seconds immediately', async () => {
+  for (const provider of ['qwen', 'openai'] as const) {
+    const output = outputClock(), h = await harness(provider, { delayedResponses: true, heartbeatMs: 60000, audioClock: output.clock });
+    try {
+      const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+      if (provider === 'qwen') { await waitFor(() => h.sent.some(event => event.type === 'response.create')); h.upstream!.send(JSON.stringify({ type: 'response.created' })); }
+      const type = provider === 'qwen' ? 'response.audio.delta' : 'session.output_audio.delta', audio = Buffer.alloc(144000).toString('base64');
+      h.upstream!.send(JSON.stringify({ type, delta: audio })); h.upstream!.send(JSON.stringify({ type, delta: audio }));
+      await waitFor(() => output.timers.size === 1); assert.equal(h.downstream.filter(event => event.type === 'audio').length, 0);
+      output.advance(1000); await waitFor(() => h.downstream.filter(event => event.type === 'audio').length >= 21);
+      const frames = h.downstream.filter(event => event.type === 'audio'); assert.equal(frames.length, 21);
+      assert(frames.every(event => Buffer.from(String(event.audio), 'base64').length <= 2400));
+      socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+      output.advance(10000); assert.equal(output.timers.size, 0);
+    } finally { await h.close(); }
+  }
+});
+
+test('a new task clears already-generated Qwen audio even after response.done and drops pending stale packets', async () => {
+  const output = outputClock(), h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000, audioClock: output.clock });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' }));
+    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: Buffer.alloc(144000, 0x11).toString('base64') })); h.upstream!.send(JSON.stringify({ type: 'response.done' }));
+    await waitFor(() => output.timers.size === 1); output.advance(0); await waitFor(() => h.downstream.some(event => event.type === 'audio'));
+    const before = h.downstream.filter(event => event.type === 'audio').length;
+    h.advance(); await refreshClassroom(id); await waitFor(() => h.sent.filter(event => event.type === 'response.create').length === 2);
+    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: Buffer.alloc(2400, 0x33).toString('base64') }));
+    await new Promise(resolve => setTimeout(resolve, 5)); output.advance(7000); await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(h.downstream.filter(event => event.type === 'audio').length, before);
+    assert(h.downstream.some(event => event.type === 'interrupt'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' }));
+    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: Buffer.alloc(2400, 0x22).toString('base64') }));
+    await waitFor(() => output.timers.size === 1); output.advance(0); await waitFor(() => h.downstream.filter(event => event.type === 'audio').length === before + 1);
+    assert.equal(Buffer.from(String(h.downstream.filter(event => event.type === 'audio').at(-1)!.audio), 'base64')[0], 0x22);
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
   } finally { await h.close(); }
 });

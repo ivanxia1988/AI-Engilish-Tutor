@@ -9,6 +9,7 @@ import { CLASSROOM_VOICE_TOOLS } from '../voice-instructions';
 import { contextChunks, spokenUpdate } from '../live-agent';
 import { readRuntimeEnv } from './runtime-env';
 import { subscribeClassroomRefresh } from './classroom-events';
+import { PcmOutputPacer, type PcmOutputClock } from './classroom-audio';
 
 export type VoiceLease = {
   id: string; epoch: number; provider: 'qwen' | 'openai'; instructions: string; initialCue: string;
@@ -28,6 +29,7 @@ export type ClassroomSocketOptions = {
   config?: (provider: VoiceLease['provider']) => ClassroomVoiceConfig;
   connect?: (url: string, headers: Record<string, string>) => WebSocket;
   heartbeatMs?: number; startupMs?: number; closeMs?: number; utteranceSettleMs?: number; responseAckMs?: number;
+  audioClock?: PcmOutputClock;
 };
 const MAX_BUFFER = 256_000, MAX_OUTPUT_BYTES = 192_000;
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
@@ -111,6 +113,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     type QwenQueued = { command?: VoiceCommand; raw?: string; cue: boolean; interrupts: boolean };
     let qwenQueue: QwenQueued[] = [], qwenAwaiting = false, qwenConfigured = false, qwenWantsCancel = false;
     let qwenVadPending = false, qwenApplicationPending = false;
+    let qwenOutputAllowed = false, qwenReplyKey: string | undefined, qwenApplicationReplyKey: string | undefined, qwenVadReplyKey: string | undefined;
     let qwenResponseState: 'idle' | 'pending' | 'active' | 'cancelling' = 'idle';
     let qwenAckTimer: ReturnType<typeof setTimeout> | undefined, qwenResponseTimer: ReturnType<typeof setTimeout> | undefined;
     const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -136,6 +139,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       if (closePromise) return closePromise;
       unsubscribeRefresh();
       stopped = true; timers.forEach(timer => clearTimeout(timer)); timers.clear(); clearInterval(heartbeatTimer); clearInterval(pingTimer);
+      outputPacer.close();
       resetUtterance();
       if (message) toClient({ type: 'error', message });
       toClient({ type: 'interrupt' });
@@ -155,6 +159,8 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       return closePromise;
     };
     const fail = () => { void stop('实时语音连接未完成，请检查网络或重新连接。'); };
+    const outputPacer = new PcmOutputPacer({ send: audio => toClient({ type: 'audio', audio, sampleRate: 24000 }), error: message => { void stop(message); } }, options.audioClock);
+    const clearPlayback = () => { outputPacer.clear(); toClient({ type: 'interrupt' }); };
     const clearQwenTimer = (timer: ReturnType<typeof setTimeout> | undefined) => { if (timer) { clearTimeout(timer); timers.delete(timer); } };
     const awaitQwenResponse = () => {
       clearQwenTimer(qwenResponseTimer);
@@ -163,14 +169,17 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const sendQwenRaw = (raw: string) => {
       if (stopped) return;
       const type = (JSON.parse(raw) as { type: string }).type;
-      if (type === 'response.create') { qwenApplicationPending = true; qwenResponseState = 'pending'; awaitQwenResponse(); }
+      if (type === 'response.create') {
+        clearPlayback(); qwenOutputAllowed = false; qwenApplicationReplyKey = currentKey();
+        qwenApplicationPending = true; qwenResponseState = 'pending'; awaitQwenResponse();
+      }
       if (!send(upstream, raw)) fail();
     };
     const cancelQwenResponse = () => {
-      if (qwenResponseState === 'pending') { qwenWantsCancel = true; return; }
+      if (qwenResponseState === 'pending') { qwenWantsCancel = true; qwenOutputAllowed = false; clearPlayback(); return; }
       if (qwenResponseState !== 'active') return;
       qwenWantsCancel = false; qwenResponseState = 'cancelling'; awaitQwenResponse();
-      toClient({ type: 'interrupt' });
+      qwenOutputAllowed = false; clearPlayback();
       sendQwenRaw(JSON.stringify({ type: 'response.cancel' }));
     };
     const pumpQwen = () => {
@@ -214,7 +223,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const context = (snapshot: ClassroomSnapshot, instructions: string, cue: boolean) => {
       if (stopped || snapshot.revision < revision) return;
       const taskChanged = snapshot.stepIndex !== stepIndex, feedbackChanged = snapshot.feedback?.id !== feedbackId;
-      if (taskChanged) resetUtterance();
+      if (taskChanged) { resetUtterance(); qwenOutputAllowed = false; clearPlayback(); }
       revision = snapshot.revision; stepIndex = snapshot.stepIndex; feedbackId = snapshot.feedback?.id;
       toClient({ type: 'snapshot', classroom: snapshot });
       const step = snapshot.course.steps[snapshot.stepIndex];
@@ -348,24 +357,28 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
             becomeReady(); pumpQwen();
           }
           else if (value.type === 'response_start') {
-            if (qwenApplicationPending) qwenApplicationPending = false;
-            else qwenVadPending = false;
+            clearPlayback();
+            if (qwenApplicationPending) { qwenApplicationPending = false; qwenReplyKey = qwenApplicationReplyKey; }
+            else { qwenVadPending = false; qwenReplyKey = qwenVadReplyKey ?? currentKey(); }
             if (qwenResponseState !== 'cancelling') { clearQwenTimer(qwenResponseTimer); qwenResponseTimer = undefined; qwenResponseState = 'active'; }
             if (qwenWantsCancel) cancelQwenResponse();
             pumpQwen();
+            qwenOutputAllowed = qwenResponseState === 'active' && qwenReplyKey === currentKey();
           }
           else if (value.type === 'response_done') {
+            qwenOutputAllowed = false;
             clearQwenTimer(qwenResponseTimer); qwenResponseTimer = undefined; qwenApplicationPending = false; qwenWantsCancel = false;
             qwenResponseState = qwenVadPending ? 'pending' : 'idle';
             if (qwenVadPending) awaitQwenResponse();
             pumpQwen();
           }
-          else if (value.type === 'audio') { if (qwenResponseState !== 'cancelling' && !toClient({ type: 'audio', audio: value.audio, sampleRate: value.sampleRate })) fail(); }
-          else if (value.type === 'speech_start') { qwenSpeechKey = currentKey(); toClient({ type: 'interrupt' }); enqueueQwen({ type: 'cancel' }); }
+          else if (value.type === 'audio') { if (qwenOutputAllowed) outputPacer.enqueue(value.audio); }
+          else if (value.type === 'speech_start') { qwenSpeechKey = currentKey(); qwenOutputAllowed = false; clearPlayback(); enqueueQwen({ type: 'cancel' }); }
           else if (value.type === 'speech_end') {
             // server_vad creates its own reply after end-of-speech. Reserve that
             // create-to-created window before ASR can advance the application task.
             qwenVadPending = true;
+            qwenVadReplyKey = qwenSpeechKey ?? currentKey();
             if (qwenResponseState === 'idle') { qwenResponseState = 'pending'; awaitQwenResponse(); }
           }
           else if (value.type === 'transcript' && value.final) record(value.role, value.text, true, value.itemId, value.role === 'child' ? qwenSpeechKey ?? currentKey() : currentKey());
@@ -377,7 +390,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       } else {
         if (event.type === 'session.started') void providerStarted((event.session as { id?: unknown } | undefined)?.id, false);
         else if (event.type === 'session.output_audio.delta' && bounded(event.delta, Math.ceil(MAX_OUTPUT_BYTES / 3) * 4)) {
-          if (!toClient({ type: 'audio', audio: event.delta, sampleRate: 24000 })) fail();
+          outputPacer.enqueue(event.delta);
         } else if ((event.type === 'session.input_transcript.delta' || event.type === 'session.output_transcript.delta') && bounded(event.delta, 6000)) {
           record(event.type === 'session.input_transcript.delta' ? 'child' : 'teacher', event.delta, false);
           if (event.type === 'session.input_transcript.delta') {
