@@ -16,7 +16,7 @@ const waitFor = async (condition: () => boolean) => {
   const end = Date.now() + 2000;
   while (!condition()) { if (Date.now() >= end) throw new Error('Expected socket event did not arrive.'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
-async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string } = {}) {
+async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; refreshOnTool?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string } = {}) {
   const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp });
   const sent: Record<string, unknown>[] = [], downstream: Record<string, unknown>[] = [], transcripts: unknown[] = [], tools: unknown[] = [];
   let upstream: WebSocket | undefined, opened = 0, released = 0, heartbeatAllowed = true, current = snapshot, resolveTool: (() => void) | undefined, resolveTranscript: (() => void) | undefined, persistedStarts = 0;
@@ -50,7 +50,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
       if (extra.delayedTranscript) await new Promise<void>(resolve => { resolveTranscript = resolve; }); transcripts.push(event);
       if (extra.refreshOnTranscript) { current = { ...snapshot, revision: 2, stepIndex: 1 }; await refreshClassroom(id); }
     },
-    async tool(name, args) { tools.push({ name, args, finalEvidence: transcripts.filter(event => (event as { final?: boolean }).final) }); if (extra.delayedTool) await new Promise<void>(resolve => { resolveTool = resolve; }); return { output: { status: 'confirmed', english: extra.spokenResult ?? 'The application confirms the selected apple.' }, snapshot: current }; },
+    async tool(name, args) { tools.push({ name, args, finalEvidence: transcripts.filter(event => (event as { final?: boolean }).final) }); if (extra.delayedTool) await new Promise<void>(resolve => { resolveTool = resolve; }); if (extra.refreshOnTool) { current = { ...current, revision: current.revision + 1, teacherObjectIds: ['apple'], feedback: { id: 'tool-feedback', kind: 'hint', message: '老师标出了图案。' } }; await refreshClassroom(id); } return { output: { status: 'confirmed', english: extra.spokenResult ?? 'The application confirms the selected apple.' }, snapshot: current }; },
     async closed() { released++; },
   };
   const controller = attachClassroomSockets(app, {
@@ -484,8 +484,8 @@ test('a new task clears already-generated Qwen audio even after response.done an
   } finally { await h.close(); }
 });
 
-test('Qwen same-task tool continuation preserves every queued PCM byte across response boundaries', async () => {
-  const output = outputClock(), h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000, audioClock: output.clock });
+test('Qwen same-task tool feedback refresh preserves every queued PCM byte across response boundaries', async () => {
+  const output = outputClock(), h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000, audioClock: output.clock, refreshOnTool: true });
   try {
     const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
     h.upstream!.send(JSON.stringify({ type: 'response.created' }));
@@ -493,6 +493,8 @@ test('Qwen same-task tool continuation preserves every queued PCM byte across re
     h.upstream!.send(JSON.stringify({ type: 'response.function_call_arguments.done', name: 'highlight_objects', call_id: 'continuation', arguments: JSON.stringify({ contextKey: `${id}:1:0`, objectIds: ['apple'] }) }));
     h.upstream!.send(JSON.stringify({ type: 'response.done' }));
     await waitFor(() => h.sent.filter(event => event.type === 'response.create').length === 2);
+    assert(h.downstream.some(event => event.type === 'snapshot' && (event.classroom as ClassroomSnapshot).feedback?.id === 'tool-feedback'));
+    assert(!h.sent.some(event => event.type === 'response.cancel'));
     h.upstream!.send(JSON.stringify({ type: 'response.created' }));
     h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: Buffer.alloc(4800, 0x22).toString('base64') }));
     h.upstream!.send(JSON.stringify({ type: 'response.done' }));

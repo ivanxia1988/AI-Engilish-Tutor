@@ -266,7 +266,9 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         teacherObjectIds: snapshot.teacherObjectIds,
         feedback: snapshot.feedback ? { kind: snapshot.feedback.kind, message: snapshot.feedback.message.slice(0, 240) } : null,
       })));
-      if (cue && (taskChanged || feedbackChanged)) speak(`Current objective: ${step?.english ?? 'The lesson is finished.'} ${taskChanged
+      // Native same-task tools own their continuation; the synchronous refresh
+      // must not replace its queued spoken prefix with a second feedback cue.
+      if (cue && (taskChanged || (feedbackChanged && (!protocol || toolsPending === 0)))) speak(`Current objective: ${step?.english ?? 'The lesson is finished.'} ${taskChanged
         ? 'Briefly acknowledge the verified previous result, ask this current question naturally, then listen.'
         : `Latest verified feedback: ${snapshot.feedback?.message.slice(0, 100) ?? 'Use the current picture.'} Give one useful clue if needed, then listen without repeating the same demand.`}`);
     };
