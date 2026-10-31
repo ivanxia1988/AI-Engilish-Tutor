@@ -16,7 +16,7 @@
 | [实施待办](teeko-v1/tasks.md) | 将规格分批落到当前项目；尚未执行的工作保持未勾选。 |
 | [视觉入口](../design/README.md) | DESIGN v0.3、iPad 状态图、吉祥物与其他页面参考。 |
 | [前端原型计划与验证](../plans/2026-10-30-frontend-prototype.md) | `/prototype` 的27个有效页面状态、电脑/平板布局、模拟边界和实际验证记录。 |
-| [重构技术架构方案](../plans/2026-10-31-teeko-architecture-design.md) | Railway已由用户选定；Node/PG/任务、账号/课程/课堂/报告边界与双供应商适配待评审；未实施或部署。 |
+| [重构技术架构方案](../plans/2026-10-31-teeko-architecture-design.md) | Railway已由用户选定；Node HTTP基础与正式前端入口已本地验证，PG/账号/课堂/报告及部署仍待完成。 |
 
 ## 状态与优先级
 

@@ -4,7 +4,7 @@
 
 2026-10-31用户确认采用第二版视觉稿，并要求实现。定位为小红书个人IP的延伸：爸爸在陪孩子学英语的过程中摸索方法，再结合自己的AI能力做成小工具，邀请有需要的家庭一起试用和交流。文案不用强营销、虚构见证/效果、用户量或免费承诺。
 
-已实现入口`/prototype#00`。这是可滚动长页，不受应用/课堂主要动作一屏完成规则限制。原有真实课堂`/`不变；正式根路径、真实账号和邀请码发放仍待Railway后端迁移。关联[TK-R-024/025](../../specs/teeko-v1/spec.md)、[TK-AC-036/037](../../specs/teeko-v1/acceptance.md)。
+已实现正式入口`/`，产品登录为`/login`；开发审阅`/prototype#00`，无框开发预览`/preview#00`。这是可滚动长页，不受应用/课堂主要动作一屏完成规则限制。旧课堂保留在仅开发可达的`/legacy-classroom`；真实账号和邀请码发放仍待Railway后端接入。关联[TK-R-024/025](../../specs/teeko-v1/spec.md)、[TK-AC-036/037](../../specs/teeko-v1/acceptance.md)。
 
 ## 内容与视觉
 
@@ -33,3 +33,9 @@
 - [Railway架构](../../plans/2026-10-31-teeko-architecture-design.md)。
 
 原始[DESIGN](../references/teeko-design-kit/DESIGN.md)、[桌面图](../references/teeko-design-kit/mockups/landing-desktop-1440.png)及[HTML参考](../references/teeko-design-kit/reference/landing.html)保留原文；用户最新审阅优先。
+
+## 正式入口与内部适配
+
+- MarketingLanding 为视觉与事件接口，不导入 prototype-auth；正式 ProductLanding 使用账号未开放边界，原型调用方单独注入内存邀请码适配。
+- `/` 和 `/login` 无审阅外框，使用完整视口；正式账号不可用时显示错误而不产生验证成功或发送邮件的提示。
+- `/prototype`、`/preview`、`/legacy-classroom` 均在生产404，外层审阅码不进入产品表单。
