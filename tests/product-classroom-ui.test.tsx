@@ -116,3 +116,12 @@ test('an action conflict rereads the authoritative classroom and does not report
  check(f.calls.filter(call=>call.path===`/api/v1/classrooms/${snapshot.id}`).length>=2);
  check(!document.querySelector('.tk-real-fireworks'));
 });
+
+test('a pending connection replaces preflight with an accessible cancel action',async()=>{
+ const f=fixture();let stopped=0;
+ const waitingVoice:import('../components/product/classroom.tsx').VoiceFactory=options=>({start:async()=>{options.onState('connecting');},stop:async()=>{stopped++;options.onState('closed');},dispose(){},setMuted(){},sendText(){}});
+ render(<Classroom classroomId={snapshot.id} voiceFactory={waitingVoice} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
+ check(screen.getByRole('button',{name:'取消连接'}));check(!screen.queryByRole('region',{name:'准备上课'}));
+ fireEvent.click(screen.getByRole('button',{name:'取消连接'}));await waitFor(()=>assert.equal(stopped,1));
+});
