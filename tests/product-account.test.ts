@@ -1,23 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ACCOUNT_UNAVAILABLE, accountIntent, accountSubmissionError, invitationSubmissionError } from '../components/product/account-state.ts';
+import { accountIntent, accountSubmissionError, invitationSubmissionError, passwordSubmissionError } from '../components/product/account-state.ts';
+import { accountRequest, destination, completed } from '../components/product/account-request.ts';
 
-test('public invitation does not accept review codes or invent verified invitations', () => {
+test('local account validation permits valid input without granting an account or verifying invitation', () => {
   assert.equal(invitationSubmissionError(''), '请输入邀请码。');
-  for (const code of ['TEEKO-TRY', 'TEEKO-NEXT', 'some-private-invite']) {
-    assert.equal(invitationSubmissionError(code), ACCOUNT_UNAVAILABLE);
-  }
+  assert.equal(invitationSubmissionError('a-private-invitation'), '');
+  const fields = { email: 'learner@example.com', password: 'not-a-real-password', invitation: 'a-private-invitation' };
+  for (const intent of ['login', 'register', 'recover'] as const) assert.equal(accountSubmissionError(intent, fields), '');
+  assert.equal(accountIntent('register'), 'register'); assert.equal(accountIntent('recover'), 'recover'); assert.equal(accountIntent('other'), 'login');
 });
-test('valid login, registration and recovery stop at unavailable account service', () => {
-  const fields = { email: 'learner@example.com', password: 'not-a-real-password', invitation: 'some-private-invite' };
-  for (const intent of ['login', 'register', 'recover'] as const) assert.equal(accountSubmissionError(intent, fields), ACCOUNT_UNAVAILABLE);
+test('password validation requires confirmation and the server password length range', () => {
+  assert(passwordSubmissionError('short', 'short'));
+  assert(passwordSubmissionError('valid-password', 'another-password'));
+  assert(passwordSubmissionError('x'.repeat(65), 'x'.repeat(65)));
+  assert.equal(passwordSubmissionError('valid-password', 'valid-password'), '');
 });
-test('local validation does not claim to send recovery emails or authenticate incomplete input', () => {
-  const empty = { email: '', password: '', invitation: '' };
-  assert.equal(accountSubmissionError('register', empty), '请输入邀请码。');
-  assert.equal(accountSubmissionError('recover', empty), '请输入有效的邮箱地址。');
-  assert.equal(accountSubmissionError('login', { ...empty, email: 'learner@example.com' }), '请输入密码。');
-  assert.equal(accountIntent('register'), 'register');
-  assert.equal(accountIntent('recover'), 'recover');
-  assert.equal(accountIntent('anything'), 'login');
+test('API requests use same-origin cookies and reject arbitrary redirect destinations', async () => {
+  const original = globalThis.fetch;
+  const calls: RequestInit[] = [];
+  try {
+    globalThis.fetch = async (_input, init) => { calls.push(init!); return Response.json({ ok: true, next: 'https://outside.example' }); };
+    await assert.rejects(accountRequest('/auth/login', destination, { body: { email: 'learner@example.com', password: 'not-a-real-password' } }), /服务响应异常/);
+    assert.equal(calls[0].credentials, 'same-origin'); assert.equal(calls[0].cache, 'no-store');
+    assert.equal(calls[0].method, 'POST'); assert.equal((calls[0].headers as Record<string, string>)['Content-Type'], 'application/json');
+  } finally { globalThis.fetch = original; }
+});
+test('API errors display bounded server messages and malformed errors remain generic', async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => Response.json({ ok: false, error: { code: 'INVITE_EXPIRED', message: '邀请码已过期。' } }, { status: 400 });
+    await assert.rejects(accountRequest('/invitations/verify', completed, { body: { code: 'a-private-invitation' } }), /邀请码已过期/);
+    globalThis.fetch = async () => new Response('internal stack or secret detail', { status: 503 });
+    await assert.rejects(accountRequest('/auth/state', completed), /服务响应异常/);
+    globalThis.fetch = async () => { throw new TypeError('network detail'); };
+    await assert.rejects(accountRequest('/auth/state', completed), /连接未成功/);
+  } finally { globalThis.fetch = original; }
 });
