@@ -108,3 +108,20 @@ test('old servers without a provider list preserve manually started OpenAI avail
   fireEvent.change(screen.getByRole('combobox', { name: '实时语音服务' }), { target: { value: 'glm' } });
   assert(screen.getByRole('button', { name: '开始实时课堂' }).hasAttribute('disabled'));
 });
+
+
+test('legacy classroom login links return to its relocated route including the connection probe', async () => {
+  globalThis.fetch = async path => String(path).includes('/api/network-check') ? Response.json({ ok: true, kind: 'littleleaf-network-probe' }) : Response.json({ configured: true, keyConfigured: true, liveReady: true, signedIn: false, voiceProviders: statuses });
+  render(<Classroom />);
+  await waitFor(() => assert(!screen.queryByText('正在打开小课堂…')));
+  await waitFor(() => assert(screen.getAllByRole('link').some(link => link.textContent?.includes('登录'))));
+  const assertDestinations = () => {
+    const links = screen.getAllByRole('link').filter(link => link.getAttribute('href')?.startsWith('/signin-with-chatgpt'));
+    assert(links.length > 0);
+    for (const link of links) assert.equal(new URL(link.getAttribute('href')!, 'http://localhost').searchParams.get('return_to'), '/legacy-classroom');
+  };
+  assertDestinations();
+  fireEvent.click(screen.getByRole('button', { name: '家长设置' }));
+  assert(screen.getByRole('link', { name: '登录后测试连接' }));
+  assertDestinations();
+});

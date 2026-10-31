@@ -59,9 +59,21 @@ test('Node production serves local HTTP and rejects anonymous or forged Sites id
   const network = await fetch(`${origin}/api/network-check`);
   assert.equal(network.status, 200);
   assert.deepEqual(await network.json(), { ok: true, kind: 'littleleaf-network-probe' });
-  const page = await fetch(`${origin}/prototype`);
+  const page = await fetch(`${origin}/`);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /Teeko/);
+  const landing = await page.text();
+  assert.match(landing, /陪孩子学英语时/);
+  assert.doesNotMatch(landing, /tp-review-bar|tp-review-footer|原型示例邀请码/);
+  const login = await fetch(`${origin}/login`);
+  assert.equal(login.status, 200);
+  const loginPage = await login.text();
+  assert.match(loginPage, /邮箱/);
+  assert.doesNotMatch(loginPage, /tp-review-bar|tp-review-footer|演示验证码/);
+  for (const path of ['/prototype', '/preview', '/legacy-classroom']) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 404, `Development-only page exposed: ${path}`);
+    assert.doesNotMatch(await response.text(), /tp-review-bar|tp-review-footer|原型示例邀请码/);
+  }
   const forged = { 'oai-authenticated-user-id': 'local-forged-user', 'oai-authenticated-user-email': 'fixture@example.test' };
   for (const headers of [{}, forged]) {
     const status = await fetch(`${origin}/api/status`, { headers });
@@ -79,5 +91,5 @@ test('Node production serves local HTTP and rejects anonymous or forged Sites id
   released.listen(port, '127.0.0.1');
   await once(released, 'listening');
   await new Promise<void>((resolve, reject) => released.close(error => error ? reject(error) : resolve()));
-  t.diagnostic(`HTTP 200: /prototype, /api/network-check, /api/status; HTTP 401: anonymous and forged Sites /api/teacher; port ${port} released and rebound after shutdown.`);
+  t.diagnostic(`HTTP 200: /, /login, /api/network-check, /api/status; HTTP 404: /prototype, /preview, /legacy-classroom; HTTP 401: anonymous and forged Sites /api/teacher; port ${port} released and rebound after shutdown.`);
 });
