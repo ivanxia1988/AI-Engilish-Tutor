@@ -63,3 +63,13 @@
 - 本节覆盖上文“原 / 课堂保留”的旧路径说明：旧实现迁到 components/legacy-classroom.tsx，保留本机数据与能力，登录返回目标随之更新。
 - 正式落地页只复用视觉组件，通过事件适配接口隔离 prototype-auth。真实邀请/邮箱/密码服务尚未接入时显示不可用，不用演示码/自动验证码/虚构报告放行。开发预览的模拟状态不能推广到正式账号后的页面。
 - 详见[拆分记录](docs/plans/2026-10-31-product-review-separation.md)及当前页面流。
+
+## 真实账号后端（2026-10-31最新）
+
+- 正式账号已用PostgreSQL实现：AccountService是身份/邀请码/邮箱证明/会话/档案的事实来源，HTTP在/api/v1；不把prototype-auth、Sites头或浏览器标记用于正式身份。新业务数据必须使用db/postgres.ts，db/index.ts仍是旧Sites/D1回归适配。
+- 注册锁定邀请并在同一事务创建账号、核销证明与邀请、写协议同意和会话；校验不消耗码。密码为Node scrypt，令牌/OTP/邀请码HMAC摘要。重置撤销全部会话与旧证明，保持AUTH_SECRET跨部署稳定。
+- 生产Docker改用Node；Worker/Vinext默认开发只保留回归，真实PG联调用Node入口。真实课程/课堂/额度/报告仍未接通，不把账号完成当全部后端完成。
+- Resend现有已验证发件子域为auth.teeko.app，示例发件Teeko <hello@auth.teeko.app>。不读取/展示密钥或把邮件替身接入生产。协议正文在lib/account-terms.ts；ACCOUNT_TERMS_VERSION需明确匹配才能注册。
+- 发码CLI无公网接口，明文仅私有0600 CSV，源码/public/符号链接绕行均拒绝；.private忽略且不进Docker。脚本失败只能输出非秘密元数据，不能回显OTP、密码、邀请码明文或连接串。
+- PG集成测试只允许loopback临时测试库，生产/远程URL必须在任何迁移/TRUNCATE前拒绝；测试schema/CSV/进程需清理。实际Node生产Cookie/页面守卫与真实收件分别验收。
+- 当前完成本地实现/验证，未push/部署/创建RailwayPG，详见docs/backend/accounts.md。

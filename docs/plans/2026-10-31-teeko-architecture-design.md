@@ -396,3 +396,9 @@ G0仍未整体完成：Node WS升级与上游中转、GPT sideband、通义Node�
 ## 20. 正式前端入口与开发工具隔离
 
 2026-10-31用户再次确认审阅框不属于产品。正式 `/` 为公开落地页、`/login` 为账号界面，均不依赖 prototype-auth；正式服务未接通时明确不可用。审阅、无框预览和旧课堂回归分别在仅开发可达的/prototype、/preview、/legacy-classroom，生产HTTP404已验证。旧组件与本机数据能力保留；此切片不完成后续账号/课堂路由及后端迁移。见[拆分记录](2026-10-31-product-review-separation.md)。
+
+## 21. 真实账号首批实现
+
+Railway仍为选定平台。首批已实现Node AccountService+PG事务、邀请码私有CLI、Resend适配、同源HttpOnly会话及正式账号/档案前端；此前BetterAuth为候选，本批为邀请/邮箱证明/账号/会话同一事务采用专用应用服务，密码使用Node内置scrypt而非原型摘要，不开放匿名认证旁路。完整Node课堂控制/额度/租约/Jobs/Bucket仍未完成。
+
+Dockerfile与railway.json现切为正式Node构建、预部署SQL迁移与数据库健康检查，但并未推送或发布线上；Railway现有应用仍旧版本。Resend已核实auth.teeko.app可发信，真实收件仍待配置发布后验收。实现、测试、参数和剩余配置见[账号运行说明](../backend/accounts.md)与[实施记录](2026-10-31-real-account-backend.md)。

@@ -1,6 +1,6 @@
 # Teeko
 
-爸爸陪孩子学英语时摸索的 AI 陪学工具。正式 `/` 为公开介绍，`/login` 为独立账号界面；没有原型外框、页面目录或状态切换。真实邀请/邮箱账号仍待接入，当前提交会明确提示账号服务尚未开放。
+爸爸陪孩子学英语时摸索的 AI 陪学工具。正式 `/` 为公开介绍，`/login` 为独立账号界面；没有原型外框、页面目录或状态切换。真实邀请码、邮箱验证码、密码登录/找回与档案现已接入服务端和PostgreSQL；缺少运行配置时如实报错。代码已本地验证，尚未部署到线上。
 
 ## 产品规格与开发入口
 
@@ -13,6 +13,12 @@
 当前讨论汇总：[产品方向与架构倾向](docs/product/current-product-direction.md)、[加入落地页后的完整页面流](docs/design/page-flow.md)。已使用两个独立worktree完成首批Node HTTP和课堂任务范围校验，分工、提交及后续依赖见[并行计划](docs/plans/2026-10-31-parallel-foundation.md)。
 
 正式入口与审阅隔离的实现、检查和未接入范围见[拆分记录](docs/plans/2026-10-31-product-review-separation.md)。
+
+## 真实账号后端
+
+已实现正式 `/api/v1` 账号闭环、邀请码批量私有导出/停用、受保护 `/onboarding` 与 `/courses`。目前课程未发布，因此正式课程列表是真实空状态；课堂、额度和报告仍待后续接入。Railway Docker配置改为正式Node并含预部署迁移和数据库健康检查，线上尚未发布。
+
+运行配置、管理命令、既有Resend域名与上线边界见[真实账号运行说明](docs/backend/accounts.md)；实现、worktree及检查见[后端实施记录](docs/plans/2026-10-31-real-account-backend.md)。协议为[试用审阅稿](docs/product/user-agreement-review.md)，批准版本未配置时不开放真实注册。
 
 ## 设计文档
 

@@ -13,6 +13,6 @@ test('Escape closes the controlled agreement dialog from its focused button', ()
   render(<Harness />);
   const button = screen.getByRole('button', { name: '知道了' }); button.focus();
   fireEvent.keyDown(button, { key: 'Escape' });
-  assert.equal(screen.queryByRole('dialog'), null);
+  assert(!screen.queryByRole('dialog'));
   assert(screen.getByText('Closed'));
 });

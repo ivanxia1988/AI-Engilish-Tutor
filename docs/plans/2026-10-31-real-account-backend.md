@@ -61,3 +61,37 @@ APP_ORIGIN是配置的可信Origin；所有写请求要求Origin与之完全一�
 - node --import tsx --test tests/auth-crypto.test.ts tests/account-store*.test.ts，TEST_DATABASE_URL启用PG集成。
 - HTTP定向测试：跨Origin/无Origin/超体积拒绝；不会响应OTP/token；真实Cookie与刷新；不接受oai身份头；注销/重置旧Cookie无效。
 - npm run typecheck、定向eslint、npm run build:node、默认build回归；PG并发兑换与完整注册/登录/重置/建档链路；CUA产品前端按钮与状态验收。
+
+## 实现与验证结果
+
+### 提交与分工
+
+- A auth-store：9fe67bb（PG服务/迁移/crypto）→主目录b38a7e9；bd8464a（空闲连接故障处理）→4dafe00。
+- B account-ui：0d36ea2（真实API与账号/档案/课程空态）→0428744。
+- 根代理：4cd0bd8（HTTP/Resend/守卫/脚本/Node部署配置）；c41da0c（私有导出规范路径）；测试来源e3e5b7a→8465926。
+- 934f47d：版本化试用协议正文及显式注册启用；2654819：实际CUA发现协议Esc无法关闭，修复并复测。
+- 两个worktree保留且不复制真实环境文件/凭据；共享node_modules只由主目录安装pg/types。所有提交均本地，未push/上线。
+
+### 已通过的检查
+
+- 73项HTTP/邮件适配/私有导出/产品UI/原型回归；15项真实PG17、crypto、pool；真实node:http+PG完整链路1项；独立Next生产HTTP与真实CLI2项。合计91项（分命令执行，未将默认skip算通过）。
+- npm run typecheck通过；本批服务/组件/测试定向ESLint 0error，5个既有img优化warning。未称全仓lint通过。
+- 默认Vinext build通过；干净auth-store worktree多次验证正式Next build，最后包含协议版本与Escfix的构建3b8a8d4通过；没有将Worker构建当作PG实时传输实测。
+- Docker正式镜像构建并启动通过，最终镜像d9450105e37c。UID1000运行，/与/login200、开发入口404；未配置服务时/api/health503。镜像无.env.local/.dev.vars/.private，最终启动容器已关闭。
+- 实际生产HTTP：健康检查200、跨Origin403、错误密码401、正确登录Cookie HttpOnly、未建档/courses→/onboarding、实际PATCH保存后courses200空列表；进程重启后会话/资料仍有效；注销后/profile401且页面回/login。最近测试端口60968已关闭并重绑。
+- 实际CLI：生成私有CSV0600，无stdout明文；list只元数据，disable生效；覆盖、公网页/源码输出、符号链接绕行均拒绝。export写入/sync失败补偿停用，失败只报告记录ID。临时schema/CSV已清理。
+- CUA实际登录错误/成功、建档/刷新/持久化、空课程、退出/守卫通过；1440×900电脑、1194×834平板页面均无溢出、主要按钮屏内；年龄单选键盘可用；协议滚动与Esc修复复测。仅用合成测试账号，不是真实邮件收件/课堂测试。临时5180服务、schema与浏览器尺寸/缩放均已恢复。
+- Resend使用既有Chrome登录只读核验：auth.teeko.app verified、Enable Sending开启，Tokyo；从未读取APIkey值、改DNS或发邮件。使用hello@auth.teeko.app，而非未单独验证的根域发件地址。
+
+### 审阅中修复的实际问题
+
+- PG空闲连接error若无人监听可终止Node进程，已安全处理且不输出原始凭据错误。
+- 注册提交后附加flow清理可能掩盖已经成功的账号/会话，已去掉冗余后提交查询；对应失败→通过测试。
+- 同一码并发注册及session插入失败保持账号/邀请/证明整体回滚；reset的账户→flow锁顺序避免死锁，认证版本使旧证明不能晚到重置。
+- 导出失败和路径绕行、测试误指数据库目标、协议正文占位与Esc行为均修复；测试在迁移/TRUNCATE前限制loopback临时库。
+
+### 剩余线上步骤
+
+Railway实际只有旧aitutor应用（production，当前remote版本981041d），没有PG或待部署patch。代码未推送，部署不会因本地提交自动发生。已准备Node Docker、preDeploy SQL和健康检查，仍需新增PG/私网引用、稳定AUTH_SECRET、APP_ORIGIN=https://teeko.app、既有Resend发件地址、负责人审阅并启用协议版本，再明确确认发布。
+
+生产邀请码未生成；真实验证码邮件送达尚未验收。发布后再生成一批私有CSV交运营者分发，并实测收件与注册，不可发测试示例码。真实课程/供应商课堂/租约额度/后台报告属于后续任务，没有被本批提前勾选。
