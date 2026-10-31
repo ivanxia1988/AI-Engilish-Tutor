@@ -3,6 +3,7 @@ import { getAccountPool } from '../../db/postgres';
 import { AccountError, AccountService } from './account-service';
 import { accountCookie, accountResponse, createAccountHandler } from './account-http';
 import { sendAccountCode } from './account-mail';
+import { ACCOUNT_TERMS_VERSION } from '../account-terms';
 
 export function accountOrigin(): string {
   const configured = readRuntimeEnv('APP_ORIGIN');
@@ -27,7 +28,7 @@ export async function handleAccountRequest(request: Request): Promise<Response> 
   try {
     const origin = accountOrigin();
     const termsVersion = readRuntimeEnv('ACCOUNT_TERMS_VERSION') ?? '';
-    if (new URL(request.url).pathname === '/api/v1/auth/register' && !termsVersion) return accountResponse({ ok: false, error: { code: 'REGISTRATION_UNAVAILABLE', message: '注册服务尚未开放，请稍后再试。' } }, 503);
+    if (new URL(request.url).pathname === '/api/v1/auth/register' && termsVersion !== ACCOUNT_TERMS_VERSION) return accountResponse({ ok: false, error: { code: 'REGISTRATION_UNAVAILABLE', message: '注册服务尚未开放，请稍后再试。' } }, 503);
     const handler = createAccountHandler({ service: getAccountService(), origin, termsVersion,
       accountError: error => error instanceof AccountError ? { code: error.code, status: error.status, message: error.message } : null,
     });

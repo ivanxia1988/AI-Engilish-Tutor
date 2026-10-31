@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import { ACCOUNT_TERMS_VERSION } from '../lib/account-terms.ts';
 import { migrateAccounts } from '../scripts/migrate-accounts.mjs';
 import { AccountService } from '../lib/server/account-service.ts';
 
@@ -61,7 +62,7 @@ test('actual Node production authenticates durable accounts, guards profile rout
   async function start() {
     child = spawn(process.execPath, [runner, 'start'], { cwd: project, stdio: ['ignore', 'ignore', 'ignore'], env: {
       ...process.env, PORT: String(port), APP_ORIGIN: origin, AUTH_SECRET: secret, DATABASE_URL: base.href,
-      RESEND_API_KEY: 'fixture-not-a-real-mail-key', RESEND_FROM: 'Teeko <hello@auth.teeko.app>', ACCOUNT_TERMS_VERSION: 'fixture-terms-v1',
+      RESEND_API_KEY: 'fixture-not-a-real-mail-key', RESEND_FROM: 'Teeko <hello@auth.teeko.app>', ACCOUNT_TERMS_VERSION,
       OPENAI_API_KEY: '', OPENAI_CHILD_DATA_READY: 'false', DASHSCOPE_API_KEY: '', VOLCENGINE_VOICE_API_KEY: '', ZHIPU_API_KEY: '',
     } });
     let startupError = false; child.on('error', () => { startupError = true; });
