@@ -2,38 +2,41 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { BookOpen, LogOut, RotateCcw } from 'lucide-react';
-import { z } from 'zod';
-import { AccountRequestError, accountRequest, destination, errorMessage, navigateProduct, type ProductDestination } from './account-request';
+import { ArrowRight, BookOpen, Check, ChevronDown, LogOut, RotateCcw, Settings2 } from 'lucide-react';
+import type { ClassroomPreferences, CourseCard } from '../../lib/classroom-contract';
+import { AccountRequestError, accountRequest, destination, errorMessage } from './account-request';
+import { classroomOptionsResponse, classroomResponse, coursesResponse, navigateClassroom, savedPreferencesResponse } from './classroom-request';
 
-const coursesResponse = z.object({ ok: z.literal(true), courses: z.array(z.never()) });
-export function Courses({ navigate = navigateProduct }: { navigate?: (path: ProductDestination) => void }) {
-  const [loading, setLoading] = useState(true), [error, setError] = useState(''), [attempt, setAttempt] = useState(0), [busy, setBusy] = useState(false);
-  const mounted = useRef(false), locked = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    const controller = new AbortController();
-    accountRequest('/courses', coursesResponse, { signal: controller.signal }).then(() => {
-      if (controller.signal.aborted) return;
-      setLoading(false); setError('');
-    }).catch(failure => {
-      if (controller.signal.aborted) return;
-      if (failure instanceof AccountRequestError && failure.status === 401) { navigate('/login'); return; }
-      setLoading(false); setError(errorMessage(failure));
-    });
-    return () => { mounted.current = false; controller.abort(); };
-  }, [attempt, navigate]);
-  async function logout() {
-    if (locked.current) return;
-    locked.current = true; setBusy(true); setError('');
-    try {
-      const result = await accountRequest('/auth/logout', destination, { body: {} });
-      if (mounted.current) navigate(result.next);
-    } catch (failure) { if (mounted.current) setError(errorMessage(failure)); }
-    finally { locked.current = false; if (mounted.current) setBusy(false); }
-  }
-  return <main className="tk-product tk-courses-page">
-    <header className="tk-product-header"><Link href="/" className="tk-wordmark" aria-label="Teeko 首页">Tee<span>ko</span><img src="/prototype-assets/teeko-head-icon.svg" alt="" /></Link><nav><Link href="/onboarding">孩子档案</Link><button type="button" disabled={busy} onClick={() => { void logout(); }}><LogOut size={16} />{busy ? '正在退出…' : '退出登录'}</button></nav></header>
-    <section className="tk-courses-content"><h1>我的课程</h1>{loading ? <p role="status">正在读取课程…</p> : error ? <div className="tk-courses-empty"><p className="tk-account-error" role="alert">{error}</p><button type="button" className="tk-submit" onClick={() => { setLoading(true); setAttempt(value => value + 1); }}><RotateCcw size={16} />重新读取</button></div> : <div className="tk-courses-empty"><BookOpen size={40} strokeWidth={1.3} /><h2>课程准备中</h2><p>课程发布后会显示在这里。</p></div>}</section>
-  </main>;
+const defaults: ClassroomPreferences = {provider:'qwen',language:'bilingual',style:'gentle',voice:'female',soundEffects:true};
+export function Courses({ navigate = navigateClassroom }: { navigate?: (path: string) => void }) {
+ const [loading,setLoading]=useState(true),[error,setError]=useState(''),[attempt,setAttempt]=useState(0),[busy,setBusy]=useState(false);
+ const [courses,setCourses]=useState<CourseCard[]>([]),[selected,setSelected]=useState(''),[active,setActive]=useState<{id:string;courseId:string}|null>(null);
+ const [preferences,setPreferences]=useState<ClassroomPreferences>(defaults),[providers,setProviders]=useState<{id:'qwen'|'openai';name:string;configured:boolean}[]>([]),[optionsError,setOptionsError]=useState(''),[saved,setSaved]=useState(false);
+ const mounted=useRef(false),locked=useRef(false);
+ useEffect(()=>{
+  mounted.current=true;const controller=new AbortController();
+  accountRequest('/courses',coursesResponse,{signal:controller.signal}).then(result=>{if(controller.signal.aborted)return;setCourses(result.courses);setSelected(value=>result.courses.some(item=>item.id===value)?value:result.courses[0]?.id??'');setActive(result.activeClassroom);setLoading(false);setError('');}).catch(failure=>{if(controller.signal.aborted)return;if(failure instanceof AccountRequestError&&failure.status===401){navigate('/login');return;}setLoading(false);setError(errorMessage(failure));});
+  accountRequest('/classroom-options',classroomOptionsResponse,{signal:controller.signal}).then(result=>{if(controller.signal.aborted)return;setPreferences(result.preferences);setProviders(result.providers);setOptionsError('');}).catch(failure=>{if(!controller.signal.aborted)setOptionsError(errorMessage(failure));});
+  return()=>{mounted.current=false;controller.abort();};
+ },[attempt,navigate]);
+ async function perform(operation:()=>Promise<void>){if(locked.current)return;locked.current=true;setBusy(true);setError('');try{await operation();}catch(failure){if(mounted.current)setError(errorMessage(failure));}finally{locked.current=false;if(mounted.current)setBusy(false);}}
+ const chosen=courses.find(course=>course.id===selected);
+ const configured=providers.some(provider=>provider.id===preferences.provider&&provider.configured);
+ function change(value:Partial<ClassroomPreferences>){setPreferences(current=>({...current,...value}));setSaved(false);}
+ return <main className="tk-product tk-courses-page tk-catalog-page">
+  <header className="tk-product-header"><Link href="/" className="tk-wordmark" aria-label="Teeko 首页">Tee<span>ko</span><img src="/prototype-assets/teeko-head-icon.svg" alt="" /></Link><nav><Link href="/onboarding">孩子档案</Link><button type="button" disabled={busy} onClick={()=>{void perform(async()=>{const result=await accountRequest('/auth/logout',destination,{body:{}});if(mounted.current)navigate(result.next);});}}><LogOut size={16}/>{busy?'请稍候…':'退出登录'}</button></nav></header>
+  <section className="tk-courses-content"><div className="tk-catalog-heading"><h1>我的课程</h1><details className="tk-teaching-preferences"><summary><Settings2 size={17}/>教学偏好<ChevronDown size={15}/></summary><div className="tk-preferences-panel">
+   <fieldset disabled={busy}><legend>语音服务</legend><div className="tk-pref-choices">{(['qwen','openai'] as const).map(id=><label key={id}><input type="radio" name="provider" checked={preferences.provider===id} onChange={()=>change({provider:id})}/><span>{id==='qwen'?'通义':'GPT Live'}{providers.find(provider=>provider.id===id)?.configured===false?' · 未配置':''}</span></label>)}</div></fieldset>
+   {preferences.provider==='openai'&&<p className="tk-pref-note">GPT Live 需要当前网络可访问 OpenAI；请检查 VPN 或代理。开课时会验证真实连接。</p>}
+   <fieldset disabled={busy}><legend>授课语言</legend><div className="tk-pref-choices">{([['english','全英文'],['bilingual','允许中文辅助']] as const).map(([id,label])=><label key={id}><input type="radio" name="teaching-language" checked={preferences.language===id} onChange={()=>change({language:id})}/><span>{label}</span></label>)}</div></fieldset>
+   <fieldset disabled={busy}><legend>老师风格</legend><div className="tk-pref-choices">{([['gentle','温柔'],['focused','认真'],['strict','严格']] as const).map(([id,label])=><label key={id}><input type="radio" name="teaching-style" checked={preferences.style===id} onChange={()=>change({style:id})}/><span>{label}</span></label>)}</div></fieldset>
+   <fieldset disabled={busy}><legend>声音</legend><div className="tk-pref-choices">{([['female','女声'],['male','男声']] as const).map(([id,label])=><label key={id}><input type="radio" name="teacher-voice" checked={preferences.voice===id} onChange={()=>change({voice:id})}/><span>{label}</span></label>)}</div></fieldset>
+   <label className="tk-pref-sound"><input type="checkbox" checked={preferences.soundEffects} disabled={busy} onChange={event=>change({soundEffects:event.target.checked})}/>互动音效</label>
+   {optionsError&&<p className="tk-account-error" role="alert">{optionsError}</p>}
+   <button type="button" className="tk-submit" disabled={busy||!!optionsError} onClick={()=>{void perform(async()=>{const result=await accountRequest('/preferences',savedPreferencesResponse,{method:'PATCH',body:preferences});if(mounted.current){setPreferences(result.preferences);setSaved(true);}});}}>{saved?<><Check size={16}/>已保存</>:'保存设置'}</button>
+  </div></details></div>
+  {error&&<p className="tk-account-error" role="alert">{error}</p>}
+  {loading?<p role="status">正在读取课程…</p>:error&&!courses.length?<div className="tk-courses-empty"><button type="button" className="tk-submit" onClick={()=>{setLoading(true);setAttempt(value=>value+1);}}><RotateCcw size={16}/>重新读取</button></div>:!courses.length?<div className="tk-courses-empty"><BookOpen size={40} strokeWidth={1.3}/><h2>课程准备中</h2><p>课程发布后会显示在这里。</p></div>:<div className="tk-catalog-grid"><nav className="tk-course-list" aria-label="课程列表">{courses.map((course,index)=><button type="button" key={course.id} aria-current={course.id===selected?'true':undefined} onClick={()=>setSelected(course.id)}><span>{String(index+1).padStart(2,'0')}</span><div><strong>{course.title}</strong><small>{course.progress.completed?'已学过':course.progress.stepIndex>0?'继续学习':'还未开始'}</small></div>{course.progress.completed&&<Check size={16}/>}</button>)}</nav>{chosen&&<article className="tk-course-detail"><div><span className="tk-course-kicker">{chosen.subtitle}</span><h2>{chosen.title}</h2><p>{chosen.description}</p></div><div className="tk-course-overview"><section><h3>这节课聊什么</h3><ul>{chosen.objectives.map(objective=><li key={objective}>{objective}</li>)}</ul><div className="tk-course-words">{chosen.words.map(word=><span key={word}>{word}</span>)}</div></section><img src="/prototype-assets/pose-handoff.svg" alt="Teeko 小麻雀老师"/></div><footer>{active?<button type="button" className="tk-submit" disabled={busy} onClick={()=>navigate(`/classroom/${active.id}`)}>回到正在上的课<ArrowRight size={18}/></button>:<button type="button" className="tk-submit" disabled={busy||!configured} onClick={()=>{void perform(async()=>{const result=await accountRequest('/classrooms',classroomResponse,{body:{courseId:chosen.id,preferences}});if(mounted.current)navigate(`/classroom/${result.classroom.id}`);});}}>跟 Teeko 老师一起学<ArrowRight size={18}/></button>}{!configured&&<p className="tk-account-error">所选语音服务暂不可用，请检查教学偏好。</p>}</footer></article>}</div>}
+  </section>
+ </main>;
 }
