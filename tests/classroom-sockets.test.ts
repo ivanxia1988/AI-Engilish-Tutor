@@ -383,3 +383,50 @@ test('a transcript handler may await authoritative refresh without cycling on it
     socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close'); await waitFor(() => h.released === 1);
   } finally { await h.close(); }
 });
+
+test('Qwen VAD end reserves the automatic response before final ASR refresh can request a new question', async () => {
+  const h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000, refreshOnTranscript: true });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' })); h.upstream!.send(JSON.stringify({ type: 'response.done' }));
+    h.upstream!.send(JSON.stringify({ type: 'input_audio_buffer.speech_started' }));
+    h.upstream!.send(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }));
+    h.upstream!.send(JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'Apple.', item_id: 'voice_reply_1' }));
+    await waitFor(() => h.downstream.some(event => event.type === 'snapshot' && (event.classroom as ClassroomSnapshot).stepIndex === 1));
+    assert.equal(h.sent.filter(event => event.type === 'response.create').length, 1);
+    h.upstream!.send(JSON.stringify({ type: 'response.created' })); await waitFor(() => h.sent.some(event => event.type === 'response.cancel'));
+    assert.equal(h.sent.filter(event => event.type === 'response.create').length, 1);
+    h.upstream!.send(JSON.stringify({ type: 'response.done' })); await waitFor(() => h.sent.filter(event => event.type === 'response.create').length === 2);
+    h.upstream!.send(JSON.stringify({ type: 'response.created' }));
+    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: 'AAAA' })); await waitFor(() => h.downstream.some(event => event.type === 'audio'));
+    assert.equal(h.downstream.filter(event => event.type === 'error').length, 0);
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('Qwen VAD pending survives the old response cancellation acknowledgement', async () => {
+  const h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' })); h.upstream!.send(JSON.stringify({ type: 'input_audio_buffer.speech_started' }));
+    await waitFor(() => h.sent.filter(event => event.type === 'response.cancel').length === 1);
+    h.upstream!.send(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' })); h.feedback('new task after native VAD'); await refreshClassroom(id);
+    h.upstream!.send(JSON.stringify({ type: 'response.done' })); await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(h.sent.filter(event => event.type === 'response.create').length, 1);
+    h.upstream!.send(JSON.stringify({ type: 'response.created' })); await waitFor(() => h.sent.filter(event => event.type === 'response.cancel').length === 2);
+    h.upstream!.send(JSON.stringify({ type: 'response.done' })); await waitFor(() => h.sent.filter(event => event.type === 'response.create').length === 2);
+    assert.equal(h.downstream.filter(event => event.type === 'error').length, 0);
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('Qwen automatic VAD response missing its created acknowledgement also has a bounded timeout', async () => {
+  const h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000, responseAckMs: 60 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' })); h.upstream!.send(JSON.stringify({ type: 'response.done' }));
+    h.upstream!.send(JSON.stringify({ type: 'input_audio_buffer.speech_started' })); h.upstream!.send(JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }));
+    await waitFor(() => h.released === 1 && h.downstream.some(event => event.type === 'error'));
+    assert.notEqual(h.upstream!.readyState, WebSocket.OPEN);
+  } finally { await h.close(); }
+});

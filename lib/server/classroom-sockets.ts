@@ -110,6 +110,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const protocol = lease.provider === 'qwen' ? createQwenProtocol({ model: config.model, voice: config.voice }) : null;
     type QwenQueued = { command?: VoiceCommand; raw?: string; cue: boolean; interrupts: boolean };
     let qwenQueue: QwenQueued[] = [], qwenAwaiting = false, qwenConfigured = false, qwenWantsCancel = false;
+    let qwenVadPending = false, qwenApplicationPending = false;
     let qwenResponseState: 'idle' | 'pending' | 'active' | 'cancelling' = 'idle';
     let qwenAckTimer: ReturnType<typeof setTimeout> | undefined, qwenResponseTimer: ReturnType<typeof setTimeout> | undefined;
     const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -162,7 +163,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const sendQwenRaw = (raw: string) => {
       if (stopped) return;
       const type = (JSON.parse(raw) as { type: string }).type;
-      if (type === 'response.create') { qwenResponseState = 'pending'; awaitQwenResponse(); }
+      if (type === 'response.create') { qwenApplicationPending = true; qwenResponseState = 'pending'; awaitQwenResponse(); }
       if (!send(upstream, raw)) fail();
     };
     const cancelQwenResponse = () => {
@@ -347,15 +348,26 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
             becomeReady(); pumpQwen();
           }
           else if (value.type === 'response_start') {
+            if (qwenApplicationPending) qwenApplicationPending = false;
+            else qwenVadPending = false;
             if (qwenResponseState !== 'cancelling') { clearQwenTimer(qwenResponseTimer); qwenResponseTimer = undefined; qwenResponseState = 'active'; }
             if (qwenWantsCancel) cancelQwenResponse();
             pumpQwen();
           }
           else if (value.type === 'response_done') {
-            clearQwenTimer(qwenResponseTimer); qwenResponseTimer = undefined; qwenResponseState = 'idle'; qwenWantsCancel = false; pumpQwen();
+            clearQwenTimer(qwenResponseTimer); qwenResponseTimer = undefined; qwenApplicationPending = false; qwenWantsCancel = false;
+            qwenResponseState = qwenVadPending ? 'pending' : 'idle';
+            if (qwenVadPending) awaitQwenResponse();
+            pumpQwen();
           }
           else if (value.type === 'audio') { if (qwenResponseState !== 'cancelling' && !toClient({ type: 'audio', audio: value.audio, sampleRate: value.sampleRate })) fail(); }
           else if (value.type === 'speech_start') { qwenSpeechKey = currentKey(); toClient({ type: 'interrupt' }); enqueueQwen({ type: 'cancel' }); }
+          else if (value.type === 'speech_end') {
+            // server_vad creates its own reply after end-of-speech. Reserve that
+            // create-to-created window before ASR can advance the application task.
+            qwenVadPending = true;
+            if (qwenResponseState === 'idle') { qwenResponseState = 'pending'; awaitQwenResponse(); }
+          }
           else if (value.type === 'transcript' && value.final) record(value.role, value.text, true, value.itemId, value.role === 'child' ? qwenSpeechKey ?? currentKey() : currentKey());
           else if (value.type === 'tool' && tools.has(value.name)) {
             try { const args: unknown = JSON.parse(value.arguments); void transcriptChain.then(() => tool(value.callId, value.name, args)); } catch { fail(); }
