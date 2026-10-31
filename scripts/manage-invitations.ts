@@ -1,5 +1,5 @@
-import { mkdir, open, chmod } from 'node:fs/promises';
-import { dirname, resolve, relative, sep } from 'node:path';
+import { mkdir, open, chmod, realpath } from 'node:fs/promises';
+import { dirname, basename, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { Pool } from 'pg';
@@ -32,6 +32,8 @@ async function main() {
     const withinProject = relative(projectRoot, output);
     if (!withinProject.startsWith(`..${sep}`) && withinProject !== '..' && !withinProject.startsWith(`.private${sep}`)) throw new Error('Private exports cannot be written into product or source directories.');
     await mkdir(dirname(output), { recursive: true, mode: 0o700 });
+    const canonicalRelative = relative(await realpath(projectRoot), resolve(await realpath(dirname(output)), basename(output)));
+    if (!canonicalRelative.startsWith(`..${sep}`) && canonicalRelative !== '..' && !canonicalRelative.startsWith(`.private${sep}`)) throw new Error('Private export path resolves into product or source directories.');
     const file = await open(output, 'wx', 0o600);
     try {
       await exportInvitationBatch(service, { count, issuedBy: flags.get('--batch') ?? 'private-distribution', expiresAt: new Date(Date.now() + days * 86400000) }, async csv => {
