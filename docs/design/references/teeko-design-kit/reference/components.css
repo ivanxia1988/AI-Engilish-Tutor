@@ -1,0 +1,158 @@
+/* Teeko reference components v0.2 (kids 6–12; parents read the marketing pages) — plain CSS on top of tokens.css. Class names are suggestions; port to your framework. */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--tk-bg-page);color:var(--tk-text-primary);font-family:var(--tk-font-body);font-size:var(--tk-text-body-size);line-height:var(--tk-text-body-lh);-webkit-font-smoothing:antialiased}
+:lang(zh), .zh{line-height:1.75;letter-spacing:0.01em}
+img,svg{display:block}
+a{color:var(--tk-text-link);text-underline-offset:3px}
+:focus-visible{outline:none;box-shadow:var(--tk-shadow-focus);border-radius:var(--tk-radius-sm)}
+
+/* type helpers */
+.t-display,.t-h1,.t-h2,.t-h3{font-family:var(--tk-font-display);margin:0;color:var(--tk-text-primary)}
+.t-display{font-size:var(--tk-text-display-size);line-height:var(--tk-text-display-lh);font-weight:900;letter-spacing:var(--tk-text-display-tracking)}
+.t-h1{font-size:var(--tk-text-h1-size);line-height:var(--tk-text-h1-lh);font-weight:800;letter-spacing:var(--tk-text-h1-tracking)}
+.t-h2{font-size:var(--tk-text-h2-size);line-height:var(--tk-text-h2-lh);font-weight:800;letter-spacing:var(--tk-text-h2-tracking)}
+.t-h3{font-size:var(--tk-text-h3-size);line-height:var(--tk-text-h3-lh);font-weight:800}
+.t-h4{font-size:var(--tk-text-h4-size);line-height:var(--tk-text-h4-lh);font-weight:600;margin:0}
+.t-body-lg{font-size:var(--tk-text-body-lg-size);line-height:var(--tk-text-body-lg-lh);color:var(--tk-text-secondary)}
+.t-sm{font-size:var(--tk-text-body-sm-size);line-height:var(--tk-text-body-sm-lh)}
+.t-caption{font-size:var(--tk-text-caption-size);line-height:var(--tk-text-caption-lh);font-weight:500;letter-spacing:.02em;color:var(--tk-text-tertiary)}
+.t-overline{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--tk-text-accent)}
+.t-zh{font-size:var(--tk-text-body-sm-size);color:var(--tk-text-tertiary);line-height:1.7}
+.accent{color:var(--tk-text-accent)}
+
+/* layout */
+.container{width:100%;max-width:calc(var(--tk-container-max) + 2*var(--tk-margin-desktop));margin:0 auto;padding:0 var(--tk-margin-mobile)}
+@media (min-width:768px){.container{padding:0 var(--tk-margin-tablet)}}
+@media (min-width:1024px){.container{padding:0 var(--tk-margin-desktop)}}
+
+/* logo lockup (HTML-native) */
+.logo{display:inline-flex;align-items:center;gap:.42em;font-family:var(--tk-font-display);font-weight:900;font-size:26px;line-height:1;letter-spacing:-0.01em;text-decoration:none;color:var(--tk-navy-900)}
+.logo .ko{color:var(--tk-orange-500)}
+.logo img{height:.74em;width:.74em;border-radius:.16em}
+.logo--inverse{color:var(--tk-cream-100)}
+
+/* buttons */
+.btn{--h:48px;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:var(--h);padding:0 22px;border-radius:var(--tk-radius-full);border:1.5px solid transparent;font:600 16px/1 var(--tk-font-body);cursor:pointer;text-decoration:none;white-space:nowrap;transition:background-color var(--tk-duration-fast) var(--tk-ease-standard),border-color var(--tk-duration-fast) var(--tk-ease-standard),transform var(--tk-duration-fast) var(--tk-ease-standard),box-shadow var(--tk-duration-fast) var(--tk-ease-standard)}
+.btn svg{width:20px;height:20px}
+.btn:active{transform:translateY(1px) scale(.98)}
+.btn--sm{--h:36px;padding:0 14px;font-size:14px}
+.btn--lg{--h:56px;padding:0 28px;font-size:17px}
+.btn--primary{background:var(--tk-brand-primary);color:var(--tk-text-inverse)}
+.btn--primary:hover{background:var(--tk-brand-primary-hover)}
+.btn--accent{background:var(--tk-brand-accent);color:var(--tk-navy-900)}
+.btn--accent:hover{background:var(--tk-brand-accent-hover)}
+.btn--secondary{background:transparent;color:var(--tk-text-primary);border-color:var(--tk-navy-300)}
+.btn--secondary:hover{background:var(--tk-navy-50);border-color:var(--tk-navy-500)}
+.btn--ghost{background:transparent;color:var(--tk-text-primary)}
+.btn--ghost:hover{background:var(--tk-cream-200)}
+.btn:disabled,.btn[aria-disabled=true]{background:var(--tk-cream-200);color:var(--tk-text-disabled);border-color:transparent;cursor:not-allowed;transform:none}
+
+/* inputs */
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font:600 14px/1.3 var(--tk-font-body)}
+.input{height:48px;padding:0 16px;border-radius:var(--tk-radius-md);border:1.5px solid var(--tk-border-input);background:var(--tk-bg-surface);font:400 16px/1 var(--tk-font-body);color:var(--tk-text-primary);transition:border-color var(--tk-duration-fast) var(--tk-ease-standard),box-shadow var(--tk-duration-fast)}
+.input::placeholder{color:var(--tk-text-tertiary)}
+.input:hover{border-color:var(--tk-ink-500)}
+.input:focus{outline:none;border-color:var(--tk-teal-500);box-shadow:0 0 0 3px var(--tk-teal-100)}
+.input[aria-invalid=true]{border-color:var(--tk-error)}
+.field .hint{font-size:13px;color:var(--tk-text-tertiary)}
+.field .hint--error{color:var(--tk-error)}
+
+/* card */
+.card{background:var(--tk-bg-surface);border:1px solid var(--tk-border-subtle);border-radius:var(--tk-radius-lg);padding:24px;box-shadow:var(--tk-shadow-xs)}
+.card--subtle{background:var(--tk-bg-subtle);box-shadow:none}
+.card--interactive{transition:box-shadow var(--tk-duration-base) var(--tk-ease-standard),transform var(--tk-duration-base) var(--tk-ease-standard)}
+.card--interactive:hover{box-shadow:var(--tk-shadow-md);transform:translateY(-2px)}
+
+/* chips */
+.chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:var(--tk-radius-full);font:600 13px/1 var(--tk-font-body);background:var(--tk-cream-100);color:var(--tk-text-secondary);border:1px solid var(--tk-border-subtle);white-space:nowrap}
+.chip svg{width:14px;height:14px}
+.chip--teal{background:var(--tk-teal-100);color:var(--tk-teal-700);border-color:transparent}
+.chip--turn{background:var(--tk-orange-100);color:var(--tk-orange-700);border-color:transparent}
+.chip--success{background:var(--tk-success-soft);color:var(--tk-success);border-color:transparent}
+.chip--warning{background:var(--tk-warning-soft);color:var(--tk-warning);border-color:transparent}
+.chip--error{background:var(--tk-error-soft);color:var(--tk-error);border-color:transparent}
+.chip--selectable{cursor:pointer}
+.chip--selectable[aria-pressed=true]{background:var(--tk-navy-900);color:var(--tk-cream-100)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+
+/* mic button: data-state = idle | turn | listening | processing | disabled */
+.mic{position:relative;width:72px;height:72px;border-radius:50%;border:2px solid var(--tk-navy-300);background:var(--tk-bg-surface);color:var(--tk-navy-900);display:grid;place-items:center;cursor:pointer;transition:background-color var(--tk-duration-base) var(--tk-ease-standard),border-color var(--tk-duration-base),transform var(--tk-duration-fast)}
+.mic svg{width:30px;height:30px}
+.mic:hover{border-color:var(--tk-navy-500)}
+.mic[data-state=turn]{background:var(--tk-turn);border-color:var(--tk-turn);color:var(--tk-turn-ink);box-shadow:var(--tk-shadow-turn);animation:tk-turn-pulse var(--tk-duration-pulse) var(--tk-ease-pulse) infinite}
+.mic[data-state=listening]{background:var(--tk-live);border-color:var(--tk-live);color:#fff}
+.mic[data-state=processing]{background:var(--tk-processing-soft);border-color:var(--tk-processing-soft);color:var(--tk-processing);cursor:progress}
+.mic[data-state=disabled]{background:var(--tk-cream-200);border-color:var(--tk-cream-200);color:var(--tk-text-disabled);cursor:not-allowed}
+@keyframes tk-turn-pulse{0%,100%{box-shadow:0 0 0 0 rgba(224,122,63,.35),0 8px 24px rgba(224,122,63,.30)}50%{box-shadow:0 0 0 14px rgba(224,122,63,0),0 8px 24px rgba(224,122,63,.30)}}
+.wave{display:flex;align-items:center;gap:3px;height:28px}
+.wave i{display:block;width:3px;height:100%;border-radius:2px;background:currentColor;transform-origin:center;animation:tk-wave 900ms ease-in-out infinite}
+.wave i:nth-child(2){animation-delay:-.2s}.wave i:nth-child(3){animation-delay:-.45s}.wave i:nth-child(4){animation-delay:-.1s}.wave i:nth-child(5){animation-delay:-.6s}
+@keyframes tk-wave{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+.dots{display:flex;gap:5px}.dots i{width:7px;height:7px;border-radius:50%;background:currentColor;animation:tk-dot 1200ms ease-in-out infinite}.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes tk-dot{0%,80%,100%{opacity:.25}40%{opacity:1}}
+
+/* turn cue (sparrow hands the mic) */
+.turn-cue{display:flex;align-items:center;gap:12px}
+.sparrow{width:56px;height:56px;border-radius:16px;flex:none;box-shadow:var(--tk-shadow-sm)}
+.bubble{position:relative;background:var(--tk-bg-surface);border:1px solid var(--tk-border-subtle);border-radius:18px 18px 18px 6px;padding:10px 14px;box-shadow:var(--tk-shadow-sm)}
+.bubble strong{display:block;font:800 16px/1.2 var(--tk-font-display);color:var(--tk-text-primary)}
+.bubble span{font-size:13px;color:var(--tk-text-tertiary)}
+.mic-token{width:26px;height:26px;border-radius:50%;background:var(--tk-turn);color:var(--tk-navy-900);display:grid;place-items:center;box-shadow:0 2px 6px rgba(224,122,63,.4)}
+.mic-token svg{width:15px;height:15px}
+.handoff{animation:tk-handoff var(--tk-duration-handoff) var(--tk-ease-spring) both}
+@keyframes tk-handoff{0%{transform:translate(-40px,-24px) rotate(-20deg) scale(.8);opacity:0}60%{opacity:1}100%{transform:none;opacity:1}}
+
+/* annotation (circle on textbook page) */
+.annot-wrap{position:relative;display:inline}
+.annot{position:absolute;pointer-events:none;overflow:visible}
+.annot path{fill:none;stroke:var(--tk-annotation);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.hl-target{background:linear-gradient(transparent 58%, rgba(224,122,63,.18) 58%)}
+
+@media (prefers-reduced-motion:reduce){*{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}}
+
+
+/* ---------- v0.2 kid layer ---------- */
+/* Tap targets: every control a child touches is >= --tk-tap-min (56px); primary lesson actions use --tk-tap-kid (64px). */
+.btn{--h:var(--tk-tap-min);font-size:17px;padding:0 26px}
+.btn--sm{--h:44px;padding:0 18px;font-size:15px}  /* parent/desktop-only contexts */
+.btn--lg{--h:var(--tk-tap-kid);padding:0 32px;font-size:19px;font-family:var(--tk-font-display);font-weight:800}
+.btn--cream{background:var(--tk-cream-100);color:var(--tk-navy-900)}
+.btn--cream:hover{background:#fff}
+.mic{width:var(--tk-mic-size);height:var(--tk-mic-size);border-width:3px}
+.mic svg{width:40px;height:40px}
+
+/* mascot: always the vector SVGs from /mascot/svg. Never crop the feet off a full-body pose. */
+.mascot{display:block;height:auto;user-select:none;pointer-events:none}
+.mascot--study{width:var(--tk-mascot-study)}
+.mascot--hero{width:var(--tk-mascot-hero)}
+.speech{position:relative;background:var(--tk-bg-surface);border:2px solid var(--tk-border-subtle);border-radius:18px;padding:14px 18px;box-shadow:var(--tk-shadow-sm);font:800 20px/1.3 var(--tk-font-display);color:var(--tk-text-primary)}
+.speech small{display:block;font:500 14px/1.5 var(--tk-font-body);color:var(--tk-text-tertiary);margin-top:4px}
+.speech::after{content:"";position:absolute;width:18px;height:18px;background:inherit;border:inherit;border-top:0;border-left:0;transform:rotate(45deg);bottom:-11px;left:36px;border-radius:0 0 6px 0}
+.speech--left::after{left:auto;right:auto;top:28px;bottom:auto;left:-11px;transform:rotate(135deg)}
+
+/* stars replace numeric scores. 3 = great, 2 = good, 1 = keep trying. Never show 0 stars; show "再试一次" instead. */
+.stars{display:inline-flex;gap:6px}
+.star{width:36px;height:36px;fill:var(--tk-star);stroke:var(--tk-star-edge);stroke-width:1.5;stroke-linejoin:round}  /* set on <svg> so <use href="#i-star"> inherits */
+.star--empty{fill:var(--tk-star-empty);stroke:var(--tk-cream-300)}
+.stars--sm .star{width:20px;height:20px}
+.star-pop{animation:tk-star-pop 420ms var(--tk-ease-spring) both}
+.star-pop:nth-child(2){animation-delay:140ms}.star-pop:nth-child(3){animation-delay:280ms}
+@keyframes tk-star-pop{0%{transform:scale(0) rotate(-30deg)}100%{transform:none}}
+
+/* per-word feedback: green = said well, orange-700 underline = try again. No red for kids. */
+.say{font:800 var(--tk-text-lesson-line-size)/1.35 var(--tk-font-display)}
+.say .ok{color:var(--tk-success)}
+.say .again{color:var(--tk-orange-700);text-decoration:underline wavy var(--tk-orange-300) 3px;text-underline-offset:6px}
+
+/* tool switch (tap / circle) — big segmented control */
+.seg{display:inline-flex;gap:6px;background:var(--tk-cream-100);padding:6px;border-radius:var(--tk-radius-full)}
+.seg button{height:52px;min-width:120px;padding:0 20px;border:0;border-radius:var(--tk-radius-full);background:transparent;font:800 17px/1 var(--tk-font-display);color:var(--tk-text-secondary);display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+.seg button svg{width:24px;height:24px}
+.seg button[aria-pressed=true]{background:var(--tk-bg-surface);color:var(--tk-text-primary);box-shadow:var(--tk-shadow-sm)}
+
+/* tappable word on the lesson page */
+.word{border-radius:12px;padding:2px 6px;margin:0 -2px;cursor:pointer;transition:background-color var(--tk-duration-fast)}
+.word:hover{background:var(--tk-teal-50)}
+.word[aria-current=true]{background:var(--tk-teal-100);color:var(--tk-teal-700)}

@@ -1,0 +1,38 @@
+<!doctype html><html lang="zh-Hans"><head><meta charset="utf-8"><link rel="stylesheet" href="../tokens.css">
+<style>
+*{box-sizing:border-box;margin:0}
+body{width:1848px;background:var(--tk-cream-100);font-family:var(--tk-font-body);color:var(--tk-navy-900);padding:48px 56px 56px}
+header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:24px}
+h1{font:800 34px/1.1 var(--tk-font-display)}h1 span{color:var(--tk-orange-600)}
+.sub{font:500 15px/1.5 var(--tk-font-body);color:var(--tk-ink-500);margin-top:6px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;max-width:880px}
+.lg{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--tk-cream-200);border-radius:var(--tk-radius-full);padding:7px 14px 7px 8px;font:600 13px/1 var(--tk-font-body)}
+.lg i{width:18px;height:18px;border-radius:50%;flex:none}
+.lg em{font-style:normal;font-weight:500;color:var(--tk-ink-500)}
+.grid{display:grid;grid-template-columns:repeat(3,560px);gap:28px}
+figure{background:#fff;border-radius:var(--tk-radius-md);padding:10px 10px 14px;box-shadow:var(--tk-shadow-sm)}
+figure img{display:block;width:540px;height:377px;border-radius:var(--tk-radius-sm);box-shadow:0 0 0 1px var(--tk-cream-200)}
+figcaption{display:flex;gap:10px;align-items:baseline;margin:12px 4px 0;font:700 16px/1.3 var(--tk-font-body)}
+figcaption b{font:800 14px/1 var(--tk-font-mono);color:var(--tk-orange-700);background:var(--tk-orange-50);padding:4px 7px;border-radius:6px}
+figcaption span{font-weight:500;color:var(--tk-ink-500);font-size:13px;margin-left:auto}
+</style></head><body>
+<header><div><h1>Tee<span>ko</span> · iPad 上课屏状态 v0.3</h1><div class="sub">1194×834 横屏 · 10–12 岁 · 屏幕上只有三样：课本页 / Teeko 老师（右上）/ 孩子小窗（右下）</div></div>
+<div class="legend">
+<div class="lg"><i style="background:#fff;box-shadow:0 0 0 1.5px #2A9D8F,0 0 0 5px #8CCFC6"></i>Teeko 在讲 <em>青绿光晕 + 呼吸外环</em></div>
+<div class="lg"><i style="background:#fff;box-shadow:0 0 0 2px #E07A3F,0 0 0 5px rgba(224,122,63,.2)"></i>轮到你 <em>孩子小窗橙框 + 音量条 + 递话筒</em></div>
+<div class="lg"><i style="background:#fff;box-shadow:0 0 0 2px #2A9D8F"></i>在听你说 <em>小窗青绿框 + 跳动音量条</em></div>
+<div class="lg"><i style="background:#fff;box-shadow:0 0 0 1.5px #E3A21A,0 0 0 5px rgba(227,162,26,.25)"></i>思考中 <em>琥珀光晕 + 三个点</em></div>
+<div class="lg"><i style="background:#F1F3F7;border:1.5px dashed #A3AABD"></i>已暂停 <em>变灰 + 虚线环 + 暂停角标，静止</em></div>
+<div class="lg"><i style="background:#fff;border:2px dashed #5C6886;border-right-color:transparent;border-bottom-color:transparent"></i>重连中 <em>旋转虚线弧</em></div>
+</div></header>
+<div class="grid">
+<figure><img src="06-teeko-speaking.png"><figcaption><b>06</b>Teeko 在讲<span>当前句高亮 + 当前词指针</span></figcaption></figure>
+<figure><img src="07-your-turn.png"><figcaption><b>07</b>轮到你<span>目标句高亮 · 递话筒 · 橙框 + 音量</span></figcaption></figure>
+<figure><img src="08-thinking.png"><figcaption><b>08</b>思考中<span>琥珀光晕 + 三点 · 页面不加东西</span></figcaption></figure>
+<figure><img src="09-stuck-scaffolding.png"><figcaption><b>09</b>卡住 · 给台阶<span>原词虚线圈 + 两个选项</span></figcaption></figure>
+<figure><img src="10-pronunciation.png"><figcaption><b>10</b>发音纠正<span>波浪线 + TEL·e·scope 小标签</span></figcaption></figure>
+<figure><img src="11-child-left-frame.png"><figcaption><b>11</b>孩子离开镜头<span>页面淡出 · 回来就继续</span></figcaption></figure>
+<figure><img src="18-pause-menu.png"><figcaption><b>18</b>暂停菜单<span>再说一遍 / 慢一点 / 中文 / 字幕 / 结束 / 继续</span></figcaption></figure>
+<figure><img src="x-child-talking.png"><figcaption><b>附</b>孩子正在说<span>小窗青绿框 · Teeko 安静聆听</span></figcaption></figure>
+<figure><img src="x-reconnecting.png"><figcaption><b>附</b>网络重连中<span>Teeko 外圈旋转虚线弧 · 无文字</span></figcaption></figure>
+</div></body></html>

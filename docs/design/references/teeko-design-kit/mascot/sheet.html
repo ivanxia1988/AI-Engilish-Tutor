@@ -1,0 +1,42 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:#FBF8F2;font-family:Inter,system-ui,sans-serif;color:#1F2A44;padding:40px;width:1520px}
+h1{font:900 34px/1 Nunito,sans-serif;margin:0 0 6px}h2{font:800 20px/1 Nunito,sans-serif;margin:34px 0 14px}
+p{margin:0;color:#4A5268;font-size:15px}
+.row{display:flex;gap:18px;align-items:flex-end;flex-wrap:wrap}
+.cell{background:#fff;border:1px solid #EDE5D6;border-radius:20px;padding:16px 16px 12px;text-align:center}
+.cell img{height:260px;display:block;margin:0 auto}
+.cell small{display:block;margin-top:8px;font-size:13px;color:#5E6478}
+.cell b{display:block;font-size:14px;margin-top:6px}
+.grid{position:relative}
+.mouths .cell img{height:120px}
+.icon img{height:160px;border-radius:0}
+.lines{background-image:linear-gradient(#EDE5D6 1px,transparent 1px);background-size:100% 30px}
+</style></head><body>
+<h1>Teeko sparrow · model sheet v1</h1>
+<p>Flat vector, no outlines. Head ≈ 1 head-height, body ≈ 1.1, legs short. Proportions are locked to a 240×300 grid; all poses share the same parts.</p>
+<h2>Turnaround</h2>
+<div class="row">
+<div class="cell lines"><img src="svg/view-front.svg"><b>Front</b></div>
+<div class="cell lines"><img src="svg/view-three-quarter.svg"><b>3/4 (icon angle)</b></div>
+<div class="cell lines"><img src="svg/view-side.svg"><b>Side</b></div>
+<div class="cell lines"><img src="svg/view-back.svg"><b>Back</b></div>
+<div class="cell icon"><img src="teeko-head-icon.svg"><b>Head icon (vector)</b><small>replaces teeko_icon.png</small></div>
+</div>
+<h2>Poses</h2>
+<div class="row">
+<div class="cell"><img src="svg/pose-idle-listening.svg"><b>Idle / listening</b><small>听你说</small></div>
+<div class="cell"><img src="svg/pose-talking.svg"><b>Talking</b><small>讲解</small></div>
+<div class="cell"><img src="svg/pose-handoff.svg" style="height:260px"><b>Your turn · hands the mic</b><small>递麦 · 轮到你了</small></div>
+<div class="cell"><img src="svg/pose-thinking.svg"><b>Thinking</b><small>想一想</small></div>
+<div class="cell"><img src="svg/pose-celebrate.svg"><b>Celebrating</b><small>太棒了</small></div>
+</div>
+<h2>Mouth shapes (visemes) · swappable groups</h2>
+<div class="row mouths">
+<div class="cell"><img src="svg/mouth-closed.svg"><b>closed</b><small>silence · m b p</small></div>
+<div class="cell"><img src="svg/mouth-small.svg"><b>small</b><small>low amplitude · e i</small></div>
+<div class="cell"><img src="svg/mouth-wide.svg"><b>wide</b><small>loud · a</small></div>
+<div class="cell"><img src="svg/mouth-oo.svg"><b>oo</b><small>round · o u w</small></div>
+</div>
+<h2>Talking loop · 90ms per frame (first 8 of 16)</h2>
+<div class="row"><div class="cell" style="padding:14px"><img src="talking-loop-frames.png" style="height:130px"><small>closed → small → wide → small → oo → small → wide → wide … · head bob 720ms · blink 3.6s</small></div></div>
+</body></html>

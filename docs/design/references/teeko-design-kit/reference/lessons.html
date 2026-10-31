@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teeko · 选一课</title>
+<link rel="stylesheet" href="../tokens.css"><link rel="stylesheet" href="components.css">
+<style>
+/* Course / lesson picker (kid-facing). Built-in courseware only: units -> lessons. No upload, no paywall, no locks (v1 is free).
+   Kid rules: one obvious next step (the "接着学" lesson), tap targets >= 64px, Chinese UI + English lesson titles. */
+.top{height:var(--tk-study-toolbar);display:flex;align-items:center;gap:20px;padding:0 28px;background:var(--tk-bg-surface);border-bottom:1px solid var(--tk-border-subtle)}
+.top .tally{margin-left:auto;display:flex;align-items:center;gap:8px;font:800 18px/1 var(--tk-font-display);background:var(--tk-cream-100);height:44px;padding:0 16px;border-radius:999px}
+.top .tally .star{width:24px;height:24px}
+.kid{width:44px;height:44px;border-radius:50%;background:var(--tk-teal-100);color:var(--tk-teal-700);display:grid;place-items:center;font:800 17px/1 var(--tk-font-display)}
+.wrap{display:grid;grid-template-columns:300px 1fr;gap:32px;padding:32px 28px 48px;max-width:1360px;margin:0 auto}
+.side h2{font:900 26px/1.2 var(--tk-font-display);margin:0 0 16px}
+.ulist{display:flex;flex-direction:column;gap:10px}
+.u{display:flex;align-items:center;gap:14px;min-height:72px;padding:10px 14px;border-radius:16px;background:#fff;border:2px solid var(--tk-border-subtle);cursor:pointer}
+.u .b{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;font:900 22px/1 var(--tk-font-display);flex:none}
+.u b{display:block;font:800 19px/1.2 var(--tk-font-display)}
+.u small{font-size:13px;color:var(--tk-text-tertiary)}
+.u[aria-current=true]{border-color:var(--tk-navy-900);box-shadow:var(--tk-shadow-sm)}
+.u .done{margin-left:auto;font:700 13px/1 var(--tk-font-body);color:var(--tk-success)}
+.b-teal{background:var(--tk-teal-100);color:var(--tk-teal-700)}.b-cream{background:var(--tk-cream-200);color:var(--tk-navy-900)}.b-navy{background:var(--tk-navy-100);color:var(--tk-navy-900)}.b-or{background:var(--tk-orange-100);color:var(--tk-orange-700)}
+.head{display:flex;align-items:flex-end;gap:12px;background:var(--tk-cream-100);border-radius:22px;padding:28px 32px 0;position:relative;overflow:hidden;min-height:220px}
+.head .txt{flex:1;padding-bottom:28px}
+.head .t-overline{color:var(--tk-teal-700)}
+.head h1{font:900 44px/1.1 var(--tk-font-display);margin:8px 0 10px}
+.head p{margin:0;font-size:17px;color:var(--tk-text-secondary)}
+.head .prog{display:flex;align-items:center;gap:12px;margin-top:18px;font:700 15px/1 var(--tk-font-body);color:var(--tk-text-secondary)}
+.bar{width:220px;height:12px;border-radius:99px;background:var(--tk-cream-300);overflow:hidden}.bar i{display:block;height:100%;width:33%;background:var(--tk-teal-500);border-radius:99px}
+.head .bird{display:flex;align-items:flex-end;gap:0}
+.head .speech{margin-bottom:150px;margin-right:-12px;font-size:18px}
+.head .speech::after{left:auto;right:28px}
+.head img{width:200px;margin-bottom:-6px}
+.lessons{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:24px}
+.l{background:#fff;border:2px solid var(--tk-border-subtle);border-radius:18px;padding:20px 22px;min-height:164px;display:flex;flex-direction:column;gap:6px;cursor:pointer;position:relative}
+.l .no{font:700 13px/1 var(--tk-font-body);color:var(--tk-text-tertiary);letter-spacing:.04em}
+.l b{font:900 24px/1.2 var(--tk-font-display)}
+.l small{font-size:15px;color:var(--tk-text-secondary)}
+.l .foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between}
+.l .stars .star{width:26px;height:26px}
+.l--next{border-color:var(--tk-navy-900);box-shadow:var(--tk-shadow-md)}
+.l--next .go{height:var(--tk-tap-kid);padding:0 26px;border-radius:999px;background:var(--tk-navy-900);color:var(--tk-cream-100);font:800 18px/1 var(--tk-font-display);display:inline-flex;align-items:center;gap:8px;border:0}
+.l--next .go svg{width:22px;height:22px}
+.l .tag{position:absolute;top:16px;right:16px}
+.l--new .new{font:700 14px/1 var(--tk-font-body);color:var(--tk-text-tertiary)}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr);padding:20px}.wrap>*,.lessons>*{min-width:0}.side{display:none}.lessons{grid-template-columns:1fr}.head{padding:20px 20px 0}.head h1{font-size:32px}.head img{width:104px;flex:none}.head .txt{min-width:0}.head .prog{white-space:nowrap}.head .speech{display:none}}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="logo" style="font-size:24px" href="landing.html"><span>Tee<span class="ko">ko</span></span><img src="../assets/teeko-icon-180.png" alt=""></a>
+  <div class="tally"><svg class="star" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.4l-5.7 3 1.1-6.4-4.6-4.5 6.4-.9z"/></svg>23</div>
+  <div class="kid" aria-label="小朋友头像">乐</div>
+</header>
+<div class="wrap">
+  <aside class="side">
+    <h2>全部单元</h2>
+    <div class="ulist">
+      <div class="u"><span class="b b-teal">1</span><div><b>Hello!</b><small>打招呼</small></div><span class="done">✓ 学完</span></div>
+      <div class="u" aria-current="true"><span class="b b-cream">2</span><div><b>Colors</b><small>颜色</small></div></div>
+      <div class="u"><span class="b b-navy">3</span><div><b>Food</b><small>食物</small></div></div>
+      <div class="u"><span class="b b-or">4</span><div><b>Animals</b><small>动物</small></div></div>
+      <div class="u"><span class="b b-teal">5</span><div><b>My Family</b><small>家人</small></div></div>
+      <div class="u"><span class="b b-cream">6</span><div><b>My Day</b><small>我的一天</small></div></div>
+    </div>
+  </aside>
+  <main>
+    <section class="head">
+      <div class="txt">
+        <span class="t-overline">Unit 2 · 颜色</span>
+        <h1>Colors</h1>
+        <p>认识颜色，说说你最喜欢什么颜色。</p>
+        <div class="prog"><span class="bar"><i></i></span>2 / 6 课</div>
+      </div>
+      <div class="bird"><div class="speech">今天学哪一课？</div><img src="../mascot/svg/pose-idle-listening.svg" alt=""></div>
+    </section>
+    <div class="lessons">
+      <article class="l"><span class="no">LESSON 1</span><b>Red and Blue</b><small>红色和蓝色</small>
+        <div class="foot"><span class="stars">
+          <svg class="star" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.4l-5.7 3 1.1-6.4-4.6-4.5 6.4-.9z"/></svg><svg class="star" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.4l-5.7 3 1.1-6.4-4.6-4.5 6.4-.9z"/></svg><svg class="star" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.4l-5.7 3 1.1-6.4-4.6-4.5 6.4-.9z"/></svg></span><span class="t-caption">再学一次</span></div></article>
+      <article class="l"><span class="no">LESSON 2</span><b>What color is it?</b><small>这是什么颜色？</small>
+        <div class="foot"><span class="stars">
+          <svg class="star" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.4l-5.7 3 1.1-6.4-4.6-4.5 6.4-.9z"/></svg><svg class="star" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.4l-5.7 3 1.1-6.4-4.6-4.5 6.4-.9z"/></svg><svg class="star star--empty" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.4l-5.7 3 1.1-6.4-4.6-4.5 6.4-.9z"/></svg></span><span class="t-caption">再学一次</span></div></article>
+      <article class="l l--next"><span class="chip chip--teal tag">接着学</span><span class="no">LESSON 3</span><b>My favorite color</b><small>我最喜欢的颜色</small>
+        <div class="foot"><button class="go">开始 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 001.5.9l10-6.5a1 1 0 000-1.7l-10-6.5A1 1 0 008 5.5z"/></svg></button></div></article>
+      <article class="l l--new"><span class="no">LESSON 4</span><b>Rainbow</b><small>彩虹的颜色</small><div class="foot"><span class="new">约 10 分钟</span></div></article>
+      <article class="l l--new"><span class="no">LESSON 5</span><b>Color the picture</b><small>给图画涂颜色</small><div class="foot"><span class="new">约 10 分钟</span></div></article>
+      <article class="l l--new"><span class="no">LESSON 6</span><b>Review: Colors</b><small>复习一下</small><div class="foot"><span class="new">约 8 分钟</span></div></article>
+    </div>
+  </main>
+</div>
+</body></html>

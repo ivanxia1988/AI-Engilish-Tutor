@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8"><title>Teeko — component states</title>
+<link rel="stylesheet" href="../tokens.css"><link rel="stylesheet" href="components.css">
+<style>
+body{padding:48px 56px}
+h2{font:800 22px/1.2 var(--tk-font-display);margin:40px 0 16px}
+h2:first-of-type{margin-top:16px}
+.row{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+.cell{display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.cell>small{font:500 12px/1 var(--tk-font-mono);color:var(--tk-text-tertiary)}
+/* forced states for documentation only */
+.btn--primary.is-hover{background:var(--tk-brand-primary-hover)}
+.btn--accent.is-hover{background:var(--tk-orange-300)}
+.btn--secondary.is-hover{background:var(--tk-navy-50);border-color:var(--tk-navy-500)}
+.btn.is-focus{box-shadow:var(--tk-shadow-focus)}
+.btn.is-active{transform:translateY(1px) scale(.98)}
+.input.is-focus{border-color:var(--tk-teal-500);box-shadow:0 0 0 3px var(--tk-teal-100)}
+.input:disabled{background:var(--tk-cream-100);border-color:var(--tk-border-default);color:var(--tk-text-disabled)}
+.mic.no-anim{animation:none}
+.frames{display:flex;gap:20px}.frames .cell{width:240px}.frames small{line-height:1.4}
+.frame{width:240px;height:200px;background:var(--tk-cream-100);border-radius:var(--tk-radius-md);position:relative}
+.frame .sparrow{position:absolute;left:24px;top:28px}
+.frame .mic-token{position:absolute}
+.frame .mic{position:absolute;right:20px;top:24px}
+.frame .mic svg{width:30px;height:30px}
+.frame img.m{position:absolute;left:8px;bottom:6px;width:150px}
+.frame .mic{right:14px;top:auto;bottom:18px;width:72px;height:72px}
+.poses{display:flex;gap:16px}.poses .cell{background:#fff;border:1px solid var(--tk-border-subtle);border-radius:16px;padding:14px;align-items:center}.poses img{height:160px}
+</style></head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs><symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol><symbol id="i-star" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.8 6.4.9-4.6 4.5 1.1 6.4L12 17.4l-5.7 3 1.1-6.4-4.6-4.5 6.4-.9z"/></symbol><symbol id="i-tap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9.5V4.5a1.5 1.5 0 0 1 3 0V12l3.4.7a2 2 0 0 1 1.6 2.2L16.5 20H9l-3-4.5a1.6 1.6 0 0 1 2.5-2L9 14"/></symbol><symbol id="i-lasso" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="10" rx="9" ry="6"/><path d="M7 15.5c-1 2 0 4.5 3 4.5"/></symbol></defs></svg>
+<div class="logo" style="font-size:28px"><span>Tee<span class="ko">ko</span></span><img src="../assets/teeko-icon-180.png" alt=""></div>
+<p class="t-sm" style="color:var(--tk-text-tertiary)">组件状态参考 v0.2（儿童版）· forced states shown with .is-hover / .is-focus / .is-active (docs only) · 儿童可点区域 ≥ 56px</p>
+
+<h2>Buttons · 44 (parent pages only) / 56 (default) / 64 (kid primary)</h2>
+<div class="row">
+ <div class="cell"><small>primary</small><button class="btn btn--primary">开始这一课</button><button class="btn btn--primary is-hover">Hover</button><button class="btn btn--primary is-focus">Focus</button><button class="btn btn--primary is-active">Active</button><button class="btn btn--primary" disabled>Disabled</button></div>
+ <div class="cell"><small>accent (1 per view)</small><button class="btn btn--accent">免费开始试学</button><button class="btn btn--accent is-hover">Hover</button><button class="btn btn--accent is-focus">Focus</button><button class="btn btn--accent is-active">Active</button><button class="btn btn--accent" disabled>Disabled</button></div>
+ <div class="cell"><small>secondary</small><button class="btn btn--secondary">看看有哪些课</button><button class="btn btn--secondary is-hover">Hover</button><button class="btn btn--secondary is-focus">Focus</button><button class="btn btn--secondary is-active">Active</button><button class="btn btn--secondary" disabled>Disabled</button></div>
+ <div class="cell"><small>cream (on navy)</small><div style="background:var(--tk-navy-900);padding:14px;border-radius:16px"><button class="btn btn--cream">免费开始</button></div><small>ghost</small><button class="btn btn--ghost">跳过</button></div>
+ <div class="cell"><small>sizes sm / md / lg</small><button class="btn btn--primary btn--sm">家长 44</button><button class="btn btn--primary">默认 56</button><button class="btn btn--primary btn--lg">孩子 64<svg><use href="#i-arrow"/></svg></button></div>
+</div>
+
+<h2>Stars replace scores · 星星代替分数</h2>
+<div class="row" style="align-items:center;gap:40px">
+ <div class="cell"><small>3 · 太棒了！</small><span class="stars "><svg class="star" viewBox="0 0 24 24"><use href="#i-star"/></svg><svg class="star" viewBox="0 0 24 24"><use href="#i-star"/></svg><svg class="star" viewBox="0 0 24 24"><use href="#i-star"/></svg></span></div>
+ <div class="cell"><small>2 · 说得真好！</small><span class="stars "><svg class="star" viewBox="0 0 24 24"><use href="#i-star"/></svg><svg class="star" viewBox="0 0 24 24"><use href="#i-star"/></svg><svg class="star star--empty" viewBox="0 0 24 24"><use href="#i-star"/></svg></span></div>
+ <div class="cell"><small>1 · 再试一次就更好啦</small><span class="stars "><svg class="star" viewBox="0 0 24 24"><use href="#i-star"/></svg><svg class="star star--empty" viewBox="0 0 24 24"><use href="#i-star"/></svg><svg class="star star--empty" viewBox="0 0 24 24"><use href="#i-star"/></svg></span></div>
+ <div class="cell"><small>sm (lists)</small><span class="stars stars--sm"><svg class="star" viewBox="0 0 24 24"><use href="#i-star"/></svg><svg class="star" viewBox="0 0 24 24"><use href="#i-star"/></svg><svg class="star star--empty" viewBox="0 0 24 24"><use href="#i-star"/></svg></span></div>
+ <div class="cell"><small>per-word feedback</small><div class="say" style="font-size:26px">My <span class="again">favorite</span> <span class="ok">color is blue.</span></div></div>
+</div>
+
+<h2>Tool switch · speech bubble · chips</h2>
+<div class="row" style="align-items:center;gap:36px">
+ <div class="seg"><button aria-pressed="true"><svg><use href="#i-tap"/></svg>点一点</button><button aria-pressed="false"><svg><use href="#i-lasso"/></svg>圈一圈</button></div>
+ <div class="speech" style="max-width:300px">轮到你啦！<small>说一说 “apple”</small></div>
+ <span class="chip chip--teal">接着学</span><span class="chip chip--success">✓ 学完</span><span class="chip chip--turn"><span class="dot"></span>轮到你了</span><span class="chip chip--error">没听到声音，检查一下麦克风</span>
+</div>
+
+<h2>Mic button states · 96px</h2>
+<div class="row">
+ <div class="cell" style="align-items:center"><button class="mic" data-state="idle"><svg><use href="#i-mic"/></svg></button><small>idle</small></div>
+ <div class="cell" style="align-items:center"><button class="mic no-anim" data-state="turn"><svg><use href="#i-mic"/></svg></button><small>turn (pulses)</small></div>
+ <div class="cell" style="align-items:center"><button class="mic" data-state="listening"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span></button><small>listening</small></div>
+ <div class="cell" style="align-items:center"><button class="mic" data-state="processing"><span class="dots"><i></i><i></i><i></i></span></button><small>processing</small></div>
+ <div class="cell" style="align-items:center"><button class="mic" data-state="disabled"><svg><use href="#i-mic"/></svg></button><small>disabled</small></div>
+ <div class="cell" style="align-items:center"><button class="mic" data-state="idle" style="box-shadow:var(--tk-shadow-focus)"><svg><use href="#i-mic"/></svg></button><small>idle + focus</small></div>
+</div>
+
+<h2>Turn cue · mascot hands the mic (640 ms, spring)</h2>
+<div class="frames">
+ <div class="cell"><div class="frame"><img class="m" src="../mascot/svg/pose-talking.svg" alt=""><span class="mic" data-state="idle"><svg><use href="#i-mic"/></svg></span></div><small>0 ms · Teeko talking (visemes), mic idle</small></div>
+ <div class="cell"><div class="frame"><img class="m" src="../mascot/svg/pose-handoff.svg" alt=""><span class="mic" data-state="idle"><svg><use href="#i-mic"/></svg></span></div><small>~320 ms · swap to handoff pose, mic held out</small></div>
+ <div class="cell"><div class="frame"><img class="m" src="../mascot/svg/pose-idle-listening.svg" alt=""><span class="mic no-anim" data-state="turn"><svg><use href="#i-mic"/></svg></span></div><small>640 ms · mic = turn; Teeko listens</small></div>
+</div>
+
+<h2>Mascot poses (use the SVGs, never redraw)</h2>
+<div class="poses">
+ <div class="cell"><img src="../mascot/svg/pose-idle-listening.svg"><small>idle / listening</small></div>
+ <div class="cell"><img src="../mascot/svg/pose-talking.svg"><small>talking</small></div>
+ <div class="cell"><img src="../mascot/svg/pose-handoff.svg"><small>handoff · your turn</small></div>
+ <div class="cell"><img src="../mascot/svg/pose-thinking.svg"><small>thinking (processing)</small></div>
+ <div class="cell"><img src="../mascot/svg/pose-celebrate.svg"><small>celebrate (3 stars)</small></div>
+</div>
+
+<h2>Cards</h2>
+<div class="row">
+ <div class="card" style="width:300px"><div class="t-h4">Card</div><p class="t-sm" style="margin:6px 0 0;color:var(--tk-text-secondary)">White, border cream-200, radius 20 (kid cards 26), shadow xs.</p></div>
+ <div class="card card--subtle" style="width:300px"><div class="t-h4">Card · subtle</div><p class="t-sm" style="margin:6px 0 0;color:var(--tk-text-secondary)">cream-100 fill, no shadow.</p></div>
+ <div class="card" style="width:300px;box-shadow:var(--tk-shadow-md);transform:translateY(-2px)"><div class="t-h4">Card · interactive hover</div><p class="t-sm" style="margin:6px 0 0;color:var(--tk-text-secondary)">shadow md, lift −2px, 200 ms.</p></div>
+</div>
+</body></html>

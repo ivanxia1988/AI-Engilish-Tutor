@@ -1,0 +1,226 @@
+[
+  {
+    "pair": "text-primary on bg-page",
+    "fg": "#1F2A44",
+    "bg": "#FBF8F2",
+    "ratio": 13.45,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "text-primary on bg-subtle",
+    "fg": "#1F2A44",
+    "bg": "#F6F1E7",
+    "ratio": 12.67,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "text-secondary on bg-page",
+    "fg": "#4A5268",
+    "bg": "#FBF8F2",
+    "ratio": 7.34,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "text-secondary on bg-subtle",
+    "fg": "#4A5268",
+    "bg": "#F6F1E7",
+    "ratio": 6.91,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "text-tertiary on bg-surface",
+    "fg": "#5E6478",
+    "bg": "#FFFFFF",
+    "ratio": 5.88,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "text-tertiary on bg-subtle",
+    "fg": "#5E6478",
+    "bg": "#F6F1E7",
+    "ratio": 5.23,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "text-accent (orange-700) on bg-page",
+    "fg": "#A44E20",
+    "bg": "#FBF8F2",
+    "ratio": 5.37,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "text-link (teal-700) on bg-page",
+    "fg": "#17665C",
+    "bg": "#FBF8F2",
+    "ratio": 6.41,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "cream-100 on navy-900 (primary button, inverse)",
+    "fg": "#F6F1E7",
+    "bg": "#1F2A44",
+    "ratio": 12.67,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "navy-900 on orange-500 (accent button, turn)",
+    "fg": "#1F2A44",
+    "bg": "#E07A3F",
+    "ratio": 4.77,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "white on orange-500 (DON'T for text)",
+    "fg": "#FFFFFF",
+    "bg": "#E07A3F",
+    "ratio": 2.99,
+    "need": 4.5,
+    "pass": false
+  },
+  {
+    "pair": "orange-500 on bg-page (DON'T for text)",
+    "fg": "#E07A3F",
+    "bg": "#FBF8F2",
+    "ratio": 2.82,
+    "need": 4.5,
+    "pass": false
+  },
+  {
+    "pair": "orange-500 on navy-900 (wordmark 'ko', dark)",
+    "fg": "#E07A3F",
+    "bg": "#1F2A44",
+    "ratio": 4.77,
+    "need": 3.0,
+    "pass": true
+  },
+  {
+    "pair": "navy-900 on teal-100 (chip)",
+    "fg": "#1F2A44",
+    "bg": "#DDF0ED",
+    "ratio": 12.06,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "navy-900 on teal-50 (reading highlight)",
+    "fg": "#1F2A44",
+    "bg": "#EEF8F6",
+    "ratio": 13.17,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "navy-900 on orange-50 (target highlight)",
+    "fg": "#1F2A44",
+    "bg": "#FDF3EC",
+    "ratio": 13.04,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "thinking dots warning-600 vs cream-100 (UI 3:1)",
+    "fg": "#A87410",
+    "bg": "#F6F1E7",
+    "ratio": 3.61,
+    "need": 3.0,
+    "pass": true
+  },
+  {
+    "pair": "thinking dots warning-600 vs white (UI 3:1)",
+    "fg": "#A87410",
+    "bg": "#FFFFFF",
+    "ratio": 4.06,
+    "need": 3.0,
+    "pass": true
+  },
+  {
+    "pair": "teal-700 on teal-100 (live label)",
+    "fg": "#17665C",
+    "bg": "#DDF0ED",
+    "ratio": 5.75,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "success-700 on success-100",
+    "fg": "#2A7148",
+    "bg": "#E3F1E8",
+    "ratio": 5.07,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "warning-700 on warning-100",
+    "fg": "#87590A",
+    "bg": "#FBF0D9",
+    "ratio": 5.36,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "error-700 on error-100",
+    "fg": "#B83A2A",
+    "bg": "#F9E3DF",
+    "ratio": 4.65,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "orange-700 on orange-100 (turn chip)",
+    "fg": "#A44E20",
+    "bg": "#FBE7D9",
+    "ratio": 4.75,
+    "need": 4.5,
+    "pass": true
+  },
+  {
+    "pair": "teal-500 focus ring vs bg-page (UI 3:1)",
+    "fg": "#2A9D8F",
+    "bg": "#FBF8F2",
+    "ratio": 3.14,
+    "need": 3.0,
+    "pass": true
+  },
+  {
+    "pair": "annotation orange-600 vs paper white (UI 3:1)",
+    "fg": "#C2602A",
+    "bg": "#FFFFFF",
+    "ratio": 4.2,
+    "need": 3.0,
+    "pass": true
+  },
+  {
+    "pair": "orange-500 decorative mark vs white (decorative only)",
+    "fg": "#E07A3F",
+    "bg": "#FFFFFF",
+    "ratio": 2.99,
+    "need": 3.0,
+    "pass": false
+  },
+  {
+    "pair": "border-input (ink-400) vs bg-surface",
+    "fg": "#8A8F9C",
+    "bg": "#FFFFFF",
+    "ratio": 3.24,
+    "need": 3.0,
+    "pass": true
+  },
+  {
+    "pair": "border-strong (decorative divider) vs white",
+    "fg": "#C9CCD4",
+    "bg": "#FFFFFF",
+    "ratio": 1.61,
+    "need": 3.0,
+    "pass": false
+  }
+]

@@ -1,0 +1,344 @@
+{
+  "source_archive": "teeko_for_codex.zip",
+  "archive_sha256": "31a557628334f61c45d18646d8bf63c5ae15264e81ff1365158c30bfa5d7e28a",
+  "imported_on": "2026-10-30",
+  "prd_version": "v0.2 draft",
+  "design_version": "v0.3",
+  "files": [
+    {
+      "source": "teeko_for_codex/PRD.md",
+      "destination": "docs/product/PRD.md",
+      "sha256": "789bbf1b30004a2ad32b32725eeef5b475f900cac325b6220ed1342f36fca823"
+    },
+    {
+      "source": "teeko_for_codex/README.md",
+      "destination": "docs/product/references/teeko-for-codex.README.md",
+      "sha256": "a627b84a29fec2f46b8d7c864db7dad144d8db9c02f485c1b864f3515203e13d"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/CODEX_PROMPT.md",
+      "destination": "docs/design/references/teeko-design-kit/CODEX_PROMPT.md",
+      "sha256": "72e9a7fe213a8a1a92fdee1650715f1f7f4cda9cbefab5f8804c3e41d748a28c"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/DESIGN.md",
+      "destination": "docs/design/references/teeko-design-kit/DESIGN.md",
+      "sha256": "2cc57708fe1bbf88a6aa2a794df0425c98323a1f9cfee3c5f093986edc509235"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/README.md",
+      "destination": "docs/design/references/teeko-design-kit/README.md",
+      "sha256": "e88ef76cfec0e5f7f7ebdbfedcbb3a72997ba785dd4417035762747e492277fb"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/build_tokens.py",
+      "destination": "docs/design/references/teeko-design-kit/build_tokens.py",
+      "sha256": "7081fb77e809d8832ada238d402621778aa2d03429c099e000d699d57f5009c7"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/contrast.json",
+      "destination": "docs/design/references/teeko-design-kit/contrast.json",
+      "sha256": "8bb1a11e87864216f179d391e5b5165377d111aea82b54a57c049d87263879b8"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/render.sh",
+      "destination": "docs/design/references/teeko-design-kit/render.sh",
+      "sha256": "1d7bb9e5c3c04d45f8441f3cb959a5dbc2677faa4e2cff30a5aa0b5934c43c8b"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/tailwind.preset.js",
+      "destination": "docs/design/references/teeko-design-kit/tailwind.preset.js",
+      "sha256": "9e1ae4471365891bdba32dfded60df6622e3b8d2f59a2df5cd6f183db5d7a24f"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/tokens.css",
+      "destination": "docs/design/references/teeko-design-kit/tokens.css",
+      "sha256": "e1120d6c1e49d9e229564aec60dff03a42182bebcda0aa9002f359484c249336"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/tokens.json",
+      "destination": "docs/design/references/teeko-design-kit/tokens.json",
+      "sha256": "ffc0959d3f80a7cf2ec452d7dbe39534708c1dba710bd68367112c1f13ad6aa1"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/assets/teeko-icon-180.png",
+      "destination": "docs/design/references/teeko-design-kit/assets/teeko-icon-180.png",
+      "sha256": "ad38b4070b6a0cc8cb465827ca80d724a8c00d46374f558a552418ec161fdd75"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/assets/teeko-icon-32.png",
+      "destination": "docs/design/references/teeko-design-kit/assets/teeko-icon-32.png",
+      "sha256": "51c8c156801070b73d34c138e514c2d82172e29009012cabe3f798251fb618eb"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/assets/teeko-icon-512.png",
+      "destination": "docs/design/references/teeko-design-kit/assets/teeko-icon-512.png",
+      "sha256": "9f9f8ecb05c1fb608de93fd2ef5feed3eb9c26d5c81a02627d8b82b73698b6e5"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/assets/teeko-logo-dark.svg",
+      "destination": "docs/design/references/teeko-design-kit/assets/teeko-logo-dark.svg",
+      "sha256": "e75b1db8eb5d50c0b07c3467c15865aff738ceee2aa8a879195f4b42e2d24490"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/assets/teeko-logo.svg",
+      "destination": "docs/design/references/teeko-design-kit/assets/teeko-logo.svg",
+      "sha256": "c5e57603eb8b635e8c418445a96a27cf10c92ae419b8b4967b3a7585ab9e15ad"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/assets/teeko_icon.png",
+      "destination": "docs/design/references/teeko-design-kit/assets/teeko_icon.png",
+      "sha256": "cf7a577e0318df435ae2802bef79728d9a957ee7c4e49cb819fdff873b562aee"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/assets/fonts/Nunito-Black.ttf",
+      "destination": "docs/design/references/teeko-design-kit/assets/fonts/Nunito-Black.ttf",
+      "sha256": "741e327cf9bd5d31a72c3f3e39e9c36b43bb48b664b4ab663d03c140daa24708"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/assets/fonts/OFL.txt",
+      "destination": "docs/design/references/teeko-design-kit/assets/fonts/OFL.txt",
+      "sha256": "580df76c95a1ec5ab878ceb25bb3d85c6a076804e9c970c8c6972aea775fdf65"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/06-teeko-speaking.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/06-teeko-speaking.png",
+      "sha256": "8012c3c3da2a549b5c3e53c98250882b53d5a676b4ee6a1d170a651eb67c587a"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/07-your-turn.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/07-your-turn.png",
+      "sha256": "70a998e078c10cccb5c10768631087c3ff2d22c98b39766d889e790b2c0a5a82"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/08-thinking.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/08-thinking.png",
+      "sha256": "3d0824259134a0fe50d3ff37c747473df0b147482ef69d3f27ed4009cee6e44a"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/09-stuck-scaffolding.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/09-stuck-scaffolding.png",
+      "sha256": "4a49efebe12f7a91ce8b4d61e553b0c8fe25ae2dbf9990563a83de9f8bea1971"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/10-pronunciation.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/10-pronunciation.png",
+      "sha256": "36543437df0e2a29b41b74e3336ff3e9bfc28210f5ef8142023ce4986b7054f3"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/11-child-left-frame.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/11-child-left-frame.png",
+      "sha256": "dded3bf63aa033bcf5f4739b6870b366fa4a24c6493fc4ee86f5dd7ae8c40e0a"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/18-pause-menu.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/18-pause-menu.png",
+      "sha256": "ce7562e415bf9634671118e926ada70cfebbbf970e4700f70cec482cdf696f6e"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/lesson.html",
+      "destination": "docs/design/references/teeko-design-kit/ipad/lesson.html",
+      "sha256": "5a52d04ffbeb8111e32c759a842a2e1bed4753bc5a072af387aea6c770579795"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/overview.html",
+      "destination": "docs/design/references/teeko-design-kit/ipad/overview.html",
+      "sha256": "5f3571d4adaa61a66bed8a926498f816737ba47f618a7c4d5b7b1fd07c86ef2b"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/overview.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/overview.png",
+      "sha256": "76e68f528adea715af690cb835d222cfba438d98643df3a5c65e419211a13c79"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/render_ipad.sh",
+      "destination": "docs/design/references/teeko-design-kit/ipad/render_ipad.sh",
+      "sha256": "5aed1448c24183bf1f369a7a676fa4d07c1b821d1ed2ae3eeefe2f13ac45d2d1"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/x-child-talking.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/x-child-talking.png",
+      "sha256": "e3dd0207fe0e984b1e3a4817864623f8f065d5e578c631264c3f768241e20864"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/ipad/x-reconnecting.png",
+      "destination": "docs/design/references/teeko-design-kit/ipad/x-reconnecting.png",
+      "sha256": "d84a26cfa52a55c9d369a05895ca64918766a7c77323cd6f836fa19d52e8f907"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/build_mascot.py",
+      "destination": "docs/design/references/teeko-design-kit/mascot/build_mascot.py",
+      "sha256": "582281b4491ac7ded258d294c41387180cb150db027b30ce59e10b7b826049f3"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/sheet.html",
+      "destination": "docs/design/references/teeko-design-kit/mascot/sheet.html",
+      "sha256": "e11ff98c9dc3a00b6371c26adee270502994651ff1d0d698612d6bdee4b7a5c1"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/talking-demo.html",
+      "destination": "docs/design/references/teeko-design-kit/mascot/talking-demo.html",
+      "sha256": "7804e9b5594c05ea65092752f2531d30f4ccd0376dd7a64778029d6ecb0d021f"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/talking-loop-frames.png",
+      "destination": "docs/design/references/teeko-design-kit/mascot/talking-loop-frames.png",
+      "sha256": "d79ef8ae0c5c28998b6e288c0f0dc7b6c78b985bdd6867ffb9d10b7bd3447315"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/teeko-head-icon-cream.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/teeko-head-icon-cream.svg",
+      "sha256": "2c32f894418b1578af3be63538a4d9d051525a3ccbf026d58739401569502e97"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/teeko-head-icon.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/teeko-head-icon.svg",
+      "sha256": "a4a76e75aa3bd85764e9c91a0167d91670558022be6251b559dc14937f84504e"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/teeko-mascot-sheet.png",
+      "destination": "docs/design/references/teeko-design-kit/mascot/teeko-mascot-sheet.png",
+      "sha256": "5c4d2bf7133b1938542ad34478974e86a8e2c92b6a733ae3b4ccd217056f281a"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/head-three-quarter.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/head-three-quarter.svg",
+      "sha256": "6e080ced56a50309516a474b50ebd316e854f6754025c667ee53a295a58941b0"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/mouth-closed.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/mouth-closed.svg",
+      "sha256": "b248c649b9e817d68c714095a8be8a4dd4802268a2374db0206a2a3079c470a9"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/mouth-oo.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/mouth-oo.svg",
+      "sha256": "0d63e1fc54e26c417b9de13bbc1ff8f363068e44d16b99b80f911f2f077e542c"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/mouth-small.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/mouth-small.svg",
+      "sha256": "527978d184c4e114704510342fc6823c53e837dbf3871d7f87bc2e76c724514e"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/mouth-wide.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/mouth-wide.svg",
+      "sha256": "d1046c150a6b5f45b2e3b3a1cfc242b057e910a853fa5f4b589d636408bb8abd"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/pose-celebrate.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/pose-celebrate.svg",
+      "sha256": "e4a72693d87ae497208727c3841a4cc4c5647d40e65a06faa88945fc8a4573d3"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/pose-handoff.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/pose-handoff.svg",
+      "sha256": "0506d09e1a2b605fef462fb9dfe9328479d9234ef2f90aeb9997ca895cc44bc2"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/pose-idle-listening.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/pose-idle-listening.svg",
+      "sha256": "be6c628f1d863031cc9cedcfaca75f5178fdb3dc4cce750cd714ebff4275953f"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/pose-talking.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/pose-talking.svg",
+      "sha256": "7a49dd868c90cb5ec1f06e9186ee6a027f7f942c11bb8338d624d9801edc5b83"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/pose-thinking.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/pose-thinking.svg",
+      "sha256": "b226759ef482fef144b96646c666c071e190ddc54a8fe59cb6cb50d276e04de8"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/teeko-rig-front.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/teeko-rig-front.svg",
+      "sha256": "0638ff17d32ac97eb68b5f8f5eec14e935064476b0da1ae2bd1532037de1ee55"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/teeko-talking-loop.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/teeko-talking-loop.svg",
+      "sha256": "4bba7ba1de6353d139d4f48aaa54753c1596b84c74629ba2c92418aa48c90ba3"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/view-back.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/view-back.svg",
+      "sha256": "4164c4881f066beda85373d4b2038b7043faffb179db030e222052bf01b69b25"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/view-front.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/view-front.svg",
+      "sha256": "6c58e09cea6911076794ea42a4a659cc50359572ec957184b4b5f78ad303e136"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/view-side.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/view-side.svg",
+      "sha256": "f1cfd68575f701a0d15ec62c7f71d77d57ddf699db664a206d79cff2fb2a296b"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mascot/svg/view-three-quarter.svg",
+      "destination": "docs/design/references/teeko-design-kit/mascot/svg/view-three-quarter.svg",
+      "sha256": "f19358b903c195c32e34e75ce19e5dec546fa4160c47d5bf743c140a66e950b3"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mockups/components-states.png",
+      "destination": "docs/design/references/teeko-design-kit/mockups/components-states.png",
+      "sha256": "14bd39863f3e3896a9f685b12d8718fef6c7822e738c0d198a282473495bcc52"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mockups/landing-desktop-1440.png",
+      "destination": "docs/design/references/teeko-design-kit/mockups/landing-desktop-1440.png",
+      "sha256": "c73e16ea785930bf6645e2e452843878d094fd0dee2a437e730b878f916593b9"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mockups/landing-mobile-390.png",
+      "destination": "docs/design/references/teeko-design-kit/mockups/landing-mobile-390.png",
+      "sha256": "bae46191ce02120f2457990b43bc1eb583436b1e536cad59b9aed1da7bc9d66f"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mockups/lessons-desktop-1440.png",
+      "destination": "docs/design/references/teeko-design-kit/mockups/lessons-desktop-1440.png",
+      "sha256": "427580a655bbbf532eaad9699207aaa9cd0fa4444cce4250c0a5775bda509a74"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mockups/lessons-mobile-390.png",
+      "destination": "docs/design/references/teeko-design-kit/mockups/lessons-mobile-390.png",
+      "sha256": "52fd44d9995aef191e9996cacb2d7f32eba205b3a03bb51a289513305afd901f"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mockups/study-desktop-1440.png",
+      "destination": "docs/design/references/teeko-design-kit/mockups/study-desktop-1440.png",
+      "sha256": "2898f3ae236b8ebd94d71c1fd5ba627a89747f8bc6430c3fb76c9410696b92c3"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/mockups/study-mobile-390.png",
+      "destination": "docs/design/references/teeko-design-kit/mockups/study-mobile-390.png",
+      "sha256": "fb7fdd58e8e9f3193456449824790b915fb26dee3b46a4850f4410fcc3055912"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/reference/components.css",
+      "destination": "docs/design/references/teeko-design-kit/reference/components.css",
+      "sha256": "4407d8a92e68b5d4ff135717bdde0b1f12523cc96e04418c7eba10945af04068"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/reference/components.html",
+      "destination": "docs/design/references/teeko-design-kit/reference/components.html",
+      "sha256": "2e9277422c8ee71fafb17949d94579cb5159156562be994945c33cdfecf71853"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/reference/landing.html",
+      "destination": "docs/design/references/teeko-design-kit/reference/landing.html",
+      "sha256": "565a52525866382dd0ebd8709498a3bd7c8b932367fc60c8a0db6675c09766fb"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/reference/lessons.html",
+      "destination": "docs/design/references/teeko-design-kit/reference/lessons.html",
+      "sha256": "31b16409ba3dd5bc2e38a940fe7c17e50fe0576e277ca9cbba40c7fb290b3168"
+    },
+    {
+      "source": "teeko_for_codex/design_kit/reference/study.html",
+      "destination": "docs/design/references/teeko-design-kit/reference/study.html",
+      "sha256": "f6cfbb81aaa2309f8655ce937583129f3a8df72980af7eda43edd5fe23f59edc"
+    }
+  ]
+}
