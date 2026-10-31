@@ -18,18 +18,31 @@ type Draft = {pointerId:number;stepId:string;points:Point[]};
 
 export async function checkClassroomMicrophone(onLevel:(level:number)=>void,signal:AbortSignal):Promise<boolean>{
  if(!navigator.mediaDevices?.getUserMedia)throw new Error('当前浏览器无法打开麦克风，请使用本机地址或 HTTPS。');
- const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false});
- let context:AudioContext|null=null;
+ if(signal.aborted)return false;
+ const capture:{stream:MediaStream|null}={stream:null};let context:AudioContext|null=null,finished=false;
+ let every:ReturnType<typeof setInterval>|undefined,sampling:ReturnType<typeof setTimeout>|undefined,startup:ReturnType<typeof setTimeout>|undefined;
+ let cancel!:()=>void;
+ const cancellation=new Promise<null>((resolve,reject)=>{cancel=()=>resolve(null);signal.addEventListener('abort',cancel,{once:true});startup=setTimeout(()=>reject(new Error('麦克风检查超时，请确认浏览器权限后重试。')),12000);});
  try{
-  if(signal.aborted)return false;
-  context=new AudioContext();await context.resume();
-  const analyser=context.createAnalyser();analyser.fftSize=512;context.createMediaStreamSource(stream).connect(analyser);const samples=new Uint8Array(analyser.fftSize);
-  return await new Promise<boolean>(resolve=>{
-   let heard=false;const every=setInterval(()=>{analyser.getByteTimeDomainData(samples);const level=Math.sqrt(samples.reduce((sum,value)=>sum+((value-128)/128)**2,0)/samples.length);heard ||= level>.012;onLevel(Math.min(1,level*8));},80);
-   const finish=()=>{clearInterval(every);clearTimeout(timeout);signal.removeEventListener('abort',finish);resolve(!signal.aborted&&heard);};
-   const timeout=setTimeout(finish,2500);signal.addEventListener('abort',finish,{once:true});
+  // Safari requires WebAudio activation within the check button's synchronous gesture.
+  context=new AudioContext();const resuming=context.resume();
+  const media=navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true},video:false}).then(stream=>{
+   if(finished||signal.aborted){stream.getTracks().forEach(track=>track.stop());return null;}
+   capture.stream=stream;return stream;
   });
- }finally{stream.getTracks().forEach(track=>track.stop());void context?.close().catch(()=>{});onLevel(0);}
+  const stream=await Promise.race([Promise.all([resuming,media]).then(([,value])=>value),cancellation]);
+  if(!stream||signal.aborted)return false;
+  if(startup)clearTimeout(startup);
+  const analyser=context.createAnalyser();analyser.fftSize=512;context.createMediaStreamSource(stream).connect(analyser);const samples=new Uint8Array(analyser.fftSize);
+  const measurement=new Promise<boolean>(resolve=>{
+   let heard=false;every=setInterval(()=>{analyser.getByteTimeDomainData(samples);const level=Math.sqrt(samples.reduce((sum,value)=>sum+((value-128)/128)**2,0)/samples.length);heard ||= level>.012;onLevel(Math.min(1,level*8));},80);
+   sampling=setTimeout(()=>resolve(heard),2500);
+  });
+  return (await Promise.race([measurement,cancellation]))??false;
+ }finally{
+  finished=true;if(startup)clearTimeout(startup);if(sampling)clearTimeout(sampling);if(every)clearInterval(every);signal.removeEventListener('abort',cancel);
+  capture.stream?.getTracks().forEach(track=>track.stop());try{void context?.close().catch(()=>{});}catch{}onLevel(0);
+ }
 }
 const time=(seconds:number)=>`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;
 

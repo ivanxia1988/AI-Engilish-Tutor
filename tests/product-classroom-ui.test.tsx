@@ -8,7 +8,7 @@ for (const key of ['window', 'self', 'document', 'HTMLElement', 'HTMLInputElemen
 function check(value:unknown):asserts value { assert.equal(Boolean(value),true); }
 const { render, screen, fireEvent, waitFor, cleanup } = await import('@testing-library/react');
 const { Courses } = await import('../components/product/courses.tsx');
-const { Classroom } = await import('../components/product/classroom.tsx');
+const { Classroom, checkClassroomMicrophone } = await import('../components/product/classroom.tsx');
 afterEach(cleanup); after(() => dom.window.close());
 export const snapshot: ClassroomSnapshot = {
  id:'10000000-0000-4000-8000-000000000001', course:{id:'picnic',version:'1',title:'一起去野餐',subtitle:"Let's have a picnic!",description:'聊聊喜欢的水果。',words:['apple','banana'],objectives:['认识水果','说说喜欢什么'],durationMinutes:8,pages:[{id:'p1',image:'/course-assets/picnic-v1.svg',width:900,height:720,objects:[{id:'apple',label:'apple',chinese:'苹果',box:{x:.15,y:.3,w:.25,h:.35}}]}],steps:[{id:'find-apple',kind:'select',pageId:'p1',targetId:'apple',english:'Can you find the apple?',chinese:'找出苹果',hint:'Look for the red fruit.',expected:'apple'}]},
@@ -176,4 +176,53 @@ test('a close that reaches PostgreSQL shortly after the socket is reconciled wit
  await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
  await waitFor(()=>assert.equal(f.starts,1));disconnected=true;f.disconnect({...snapshot,status:'ended',revision:3,endReason:'time_limit',endedAt:'2026-11-01T00:10:00Z',elapsedSeconds:600},'error');
  await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));assert.equal(f.starts,1);assert.equal(reads,2);
+});
+
+
+function microphoneFixture(){
+ const previousContext=Object.getOwnPropertyDescriptor(globalThis,'AudioContext'),previousMedia=Object.getOwnPropertyDescriptor(navigator,'mediaDevices');
+ const events:string[]=[],requests:MediaStreamConstraints[]=[];let resolveMedia!:(stream:MediaStream)=>void,rejectMedia!:(error:Error)=>void,stopped=0,closed=0,analysers=0;
+ const media=new Promise<MediaStream>((resolve,reject)=>{resolveMedia=resolve;rejectMedia=reject;});
+ class Context{
+  constructor(){events.push('context');}
+  async resume(){events.push('resume');}
+  async close(){closed++;}
+  createAnalyser(){analysers++;return{fftSize:512,getByteTimeDomainData(values:Uint8Array){values.fill(150);}};}
+  createMediaStreamSource(){return{connect(){}};}
+ }
+ Object.defineProperty(globalThis,'AudioContext',{value:Context,configurable:true});
+ Object.defineProperty(navigator,'mediaDevices',{value:{getUserMedia:(constraints:MediaStreamConstraints)=>{events.push('media');requests.push(constraints);return media;}},configurable:true});
+ return{events,requests,get stopped(){return stopped;},get closed(){return closed;},get analysers(){return analysers;},resolve(){resolveMedia({getTracks:()=>[{stop(){stopped++;}}]} as unknown as MediaStream);},reject(){rejectMedia(new Error('permission rejected'));},restore(){if(previousContext)Object.defineProperty(globalThis,'AudioContext',previousContext);else Reflect.deleteProperty(globalThis,'AudioContext');if(previousMedia)Object.defineProperty(navigator,'mediaDevices',previousMedia);else Reflect.deleteProperty(navigator,'mediaDevices');}};
+}
+
+test('the real microphone check primes WebAudio synchronously before pending permission',async()=>{
+ const f=microphoneFixture(),controller=new AbortController();const checked=checkClassroomMicrophone(()=>{},controller.signal);
+ try{assert.deepEqual(f.events,['context','resume','media']);assert.equal(f.requests[0].video,false);}
+ finally{controller.abort();f.resolve();await checked;f.restore();}
+});
+
+test('the real microphone check cleans its primed context when permission is rejected',async()=>{
+ const f=microphoneFixture(),controller=new AbortController();
+ try{const checked=checkClassroomMicrophone(()=>{},controller.signal);const rejected=assert.rejects(checked,/permission rejected/);f.reject();await rejected;assert.equal(f.closed,1);assert.equal(f.stopped,0);}
+ finally{controller.abort();f.restore();}
+});
+
+test('aborting a pending microphone permission resolves promptly and stops the late stream',async()=>{
+ const f=microphoneFixture(),controller=new AbortController();let timeout:ReturnType<typeof setTimeout>|undefined;
+ try{const checked=checkClassroomMicrophone(()=>{},controller.signal);controller.abort();const result=await Promise.race([checked,new Promise<string>(resolve=>{timeout=setTimeout(()=>resolve('still checking'),100);})]);assert.equal(result,false);assert.equal(f.closed,1);f.resolve();await Promise.resolve();await Promise.resolve();assert.equal(f.stopped,1);}
+ finally{if(timeout)clearTimeout(timeout);controller.abort();f.resolve();f.restore();}
+});
+
+test('aborting an active microphone check releases analysis and microphone tracks',async()=>{
+ const f=microphoneFixture(),controller=new AbortController();
+ try{const checked=checkClassroomMicrophone(()=>{},controller.signal);f.resolve();await waitFor(()=>assert.equal(f.analysers,1));controller.abort();assert.equal(await checked,false);assert.equal(f.closed,1);assert.equal(f.stopped,1);}
+ finally{controller.abort();f.restore();}
+});
+
+test('an unanswered microphone permission check times out and cleans any late stream',async t=>{
+ const f=microphoneFixture(),controller=new AbortController();t.mock.timers.enable({apis:['setTimeout']});
+ try{
+  const checked=checkClassroomMicrophone(()=>{},controller.signal),rejected=assert.rejects(checked,/检查超时/);
+  t.mock.timers.tick(30000);await rejected;assert.equal(f.closed,1);f.resolve();await Promise.resolve();await Promise.resolve();assert.equal(f.stopped,1);
+ }finally{controller.abort();t.mock.timers.reset();f.restore();}
 });
