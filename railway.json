@@ -5,7 +5,8 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "healthcheckPath": "/api/network-check",
+    "healthcheckPath": "/api/health",
+    "preDeployCommand": "node scripts/migrate-accounts.mjs",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3

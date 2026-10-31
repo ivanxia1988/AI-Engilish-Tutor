@@ -7,7 +7,7 @@ export const completed = z.object({ ok: z.literal(true) });
 export const destination = z.object({ ok: z.literal(true), next: z.enum(['/', '/login', '/login?intent=register', '/login?intent=recover', '/onboarding', '/courses']) });
 export const sentCode = z.object({ ok: z.literal(true), stage: z.literal('code'), retryAfter: z.number().int().min(0).max(3600) });
 export const verifiedCode = z.object({ ok: z.literal(true), stage: z.literal('password') });
-export const childProfile = z.object({ name: z.string().trim().min(1).max(30), ageRange: z.enum(['8–9', '10–11', '12–13']), level: z.enum(['starter', 'sentences', 'conversation', 'unsure']) });
+export const childProfile = z.object({ name: z.string().trim().min(1).max(20), ageRange: z.enum(['8–9', '10–11', '12–13']), level: z.enum(['starter', 'sentences', 'conversation', 'unsure']) });
 export const profileResponse = z.object({ ok: z.literal(true), profile: childProfile.nullable() });
 export type ChildProfile = z.infer<typeof childProfile>;
 export type ProductDestination = z.infer<typeof destination>['next'];
