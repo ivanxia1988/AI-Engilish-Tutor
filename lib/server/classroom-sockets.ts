@@ -8,6 +8,7 @@ import type { VoiceCommand } from '../voice-providers/types';
 import { CLASSROOM_VOICE_TOOLS } from '../voice-instructions';
 import { contextChunks, spokenUpdate } from '../live-agent';
 import { readRuntimeEnv } from './runtime-env';
+import { subscribeClassroomRefresh } from './classroom-events';
 
 export type VoiceLease = {
   id: string; epoch: number; provider: 'qwen' | 'openai'; instructions: string; initialCue: string;
@@ -96,7 +97,8 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
   };
 
   function ownConnection(client: WebSocket, lease: VoiceLease, config: ClassroomVoiceConfig, endpoint: string) {
-    let upstream: WebSocket | undefined, ready = false, stopped = false, finalized = false, heartbeatBusy = false, persistingStart = false, revision = lease.snapshot.revision;
+    let upstream: WebSocket | undefined, ready = false, stopped = false, finalized = false, persistingStart = false, revision = lease.snapshot.revision;
+    let refreshQueued = false, refreshPromise: Promise<void> | undefined, unsubscribeRefresh: () => void = () => {};
     let stepIndex = lease.snapshot.stepIndex, feedbackId = lease.snapshot.feedback?.id, counter = 0, frames = 0, windowStart = Date.now(), messages = 0, lastTextAt = 0, toolsPending = 0;
     let closePromise: Promise<void> | undefined, resolveFinal: (() => void) | undefined;
     const toolsSeen = new Set<string>(), history: { role: 'child' | 'teacher'; text: string }[] = [];
@@ -131,6 +133,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     };
     const stop = (message?: string) => {
       if (closePromise) return closePromise;
+      unsubscribeRefresh();
       stopped = true; timers.forEach(timer => clearTimeout(timer)); timers.clear(); clearInterval(heartbeatTimer); clearInterval(pingTimer);
       resetUtterance();
       if (message) toClient({ type: 'error', message });
@@ -394,16 +397,27 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       alive = false;
       try { client.ping(); } catch { void stop(); }
     }, 15000);
-    const heartbeatTimer = setInterval(async () => {
-      if (stopped || heartbeatBusy) return;
-      heartbeatBusy = true;
-      try {
-        const heartbeat = await timed(lease.heartbeat(), 5000);
-        if (!heartbeat) { void stop(); return; }
-        if (ready && heartbeat.snapshot.revision !== revision) context(heartbeat.snapshot, heartbeat.instructions, true);
-      } catch { void stop('课堂连接已停止，请重新连接。'); }
-      finally { heartbeatBusy = false; }
-    }, options.heartbeatMs ?? 2000);
+    const refreshConnection = (): Promise<void> => {
+      if (stopped) return Promise.resolve();
+      refreshQueued = true;
+      if (refreshPromise) return refreshPromise;
+      refreshPromise = (async () => {
+        await Promise.resolve();
+        try {
+          while (refreshQueued && !stopped) {
+            refreshQueued = false;
+            try {
+              const heartbeat = await timed(lease.heartbeat(), 5000);
+              if (!heartbeat) { void stop(); return; }
+              if (ready && heartbeat.snapshot.revision !== revision) context(heartbeat.snapshot, heartbeat.instructions, true);
+            } catch { void stop('课堂连接已停止，请重新连接。'); return; }
+          }
+        } finally { refreshPromise = undefined; }
+      })();
+      return refreshPromise;
+    };
+    const heartbeatTimer = setInterval(() => { void refreshConnection(); }, options.heartbeatMs ?? 2000);
+    unsubscribeRefresh = subscribeClassroomRefresh(lease.id, refreshConnection);
     const startup = setTimeout(() => { void stop('语音服务连接超时，请重试。'); }, options.startupMs ?? 20000);
     timers.add(startup);
     const deadline = setTimeout(() => { void stop('本次课堂已到时间，请查看课堂小结。'); }, Math.min(lease.remainingMs, 2_147_483_647)); timers.add(deadline);

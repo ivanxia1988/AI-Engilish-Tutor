@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import WebSocket, { WebSocketServer } from 'ws';
 import { attachClassroomSockets, type VoiceLease } from '../lib/server/classroom-sockets';
 import type { ClassroomSnapshot } from '../lib/classroom-contract';
+import { refreshClassroom } from '../lib/server/classroom-events';
 
 const id = '6e98bb60-4ed0-4c64-bcbc-174d5dcb26c2';
 const snapshot = { id, revision: 1, stepIndex: 0, connectionEpoch: 1, status: 'active', preferences: { voice: 'female' }, teacherObjectIds: [], feedback: null,
@@ -14,10 +15,11 @@ const waitFor = async (condition: () => boolean) => {
   const end = Date.now() + 2000;
   while (!condition()) { if (Date.now() >= end) throw new Error('Expected socket event did not arrive.'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
-async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string } = {}) {
+async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean } = {}) {
   const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp });
   const sent: Record<string, unknown>[] = [], downstream: Record<string, unknown>[] = [], transcripts: unknown[] = [], tools: unknown[] = [];
   let upstream: WebSocket | undefined, opened = 0, released = 0, heartbeatAllowed = true, current = snapshot, resolveTool: (() => void) | undefined, resolveTranscript: (() => void) | undefined, persistedStarts = 0;
+  let heartbeatCalls = 0, delayHeartbeat = false, releaseHeartbeat: (() => void) | undefined;
   vendor.on('connection', socket => {
     upstream = socket;
     socket.on('message', data => {
@@ -37,9 +39,16 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
   const app = createServer();
   const lease: VoiceLease = {
     id, epoch: 1, provider, instructions: 'Current verified task: find apple.', initialCue: 'Can you find the apple?', remainingMs: extra.remainingMs ?? 60000, snapshot, ...(extra.voice ? { voice: extra.voice } : {}),
-    async heartbeat() { return heartbeatAllowed ? { snapshot: current, instructions: extra.instructions ?? current.feedback?.message ?? 'Current verified task: say apple.' } : null; },
+    async heartbeat() {
+      heartbeatCalls++; const captured = current;
+      if (delayHeartbeat) { delayHeartbeat = false; await new Promise<void>(resolve => { releaseHeartbeat = resolve; }); }
+      return heartbeatAllowed ? { snapshot: captured, instructions: extra.instructions ?? captured.feedback?.message ?? 'Current verified task: say apple.' } : null;
+    },
     async started(sessionId) { assert.equal(sessionId, 'voice_session'); if (extra.startedFails) throw new Error('fixture persistence unavailable'); persistedStarts++; },
-    async transcript(event) { if (extra.delayedTranscript) await new Promise<void>(resolve => { resolveTranscript = resolve; }); transcripts.push(event); },
+    async transcript(event) {
+      if (extra.delayedTranscript) await new Promise<void>(resolve => { resolveTranscript = resolve; }); transcripts.push(event);
+      if (extra.refreshOnTranscript) { current = { ...snapshot, revision: 2, stepIndex: 1 }; await refreshClassroom(id); }
+    },
     async tool(name, args) { tools.push({ name, args, finalEvidence: transcripts.filter(event => (event as { final?: boolean }).final) }); if (extra.delayedTool) await new Promise<void>(resolve => { resolveTool = resolve; }); return { output: { status: 'confirmed', english: extra.spokenResult ?? 'The application confirms the selected apple.' }, snapshot: current }; },
     async closed() { released++; },
   };
@@ -48,7 +57,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
     open: async () => { opened++; return lease; },
     config: () => ({ key: 'non-production-fixture', model: provider === 'qwen' ? 'qwen3.8-omni-flash-realtime' : 'gpt-live-1', voice: 'Tina', workspaceId: 'workspace', region: 'cn-beijing', childDataReady: true }),
     connect: () => new WebSocket(`ws://127.0.0.1:${vendorAddress.port}`),
-    heartbeatMs: 25, startupMs: extra.startupMs ?? 1000, closeMs: 30, utteranceSettleMs: 20, responseAckMs: extra.responseAckMs ?? 1000,
+    heartbeatMs: extra.heartbeatMs ?? 25, startupMs: extra.startupMs ?? 1000, closeMs: 30, utteranceSettleMs: 20, responseAckMs: extra.responseAckMs ?? 1000,
   });
   app.listen(0, '127.0.0.1'); await once(app, 'listening');
   const address = app.address(); assert(address && typeof address !== 'string');
@@ -58,7 +67,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
     socket.on('message', data => downstream.push(JSON.parse(data.toString())));
     return socket;
   };
-  return { connect, sent, downstream, transcripts, tools, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1 }; }, feedback: (message = 'Try once more.') => { current = { ...current, revision: current.revision + 1, feedback: { id: `feedback_${current.revision + 1}`, kind: 'retry', message } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
+  return { connect, sent, downstream, transcripts, tools, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, get heartbeatCalls() { return heartbeatCalls; }, delayNextHeartbeat: () => { delayHeartbeat = true; }, releaseHeartbeat: () => releaseHeartbeat?.(), revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1 }; }, feedback: (message = 'Try once more.') => { current = { ...current, revision: current.revision + 1, feedback: { id: `feedback_${current.revision + 1}`, kind: 'retry', message } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
 }
 
 function pcmFrame(voiced: boolean) {
@@ -308,7 +317,7 @@ test('Qwen missing response.created acknowledgement times out visibly and releas
   try {
     const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
     await waitFor(() => h.released === 1);
-    assert(h.downstream.some(event => event.type === 'error')); assert.notEqual(h.upstream!.readyState, WebSocket.OPEN);
+    await waitFor(() => h.downstream.some(event => event.type === 'error') && h.upstream!.readyState !== WebSocket.OPEN);
   } finally { await h.close(); }
 });
 
@@ -336,5 +345,41 @@ test('GPT task-change commentary contains the actual current question before qui
     h.advance(); await waitFor(() => h.sent.some(event => event.type === 'session.commentary.append' && String(event.content).includes('Say the banana.')));
     assert.equal(h.downstream.filter(event => event.type === 'error').length, 0);
     socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('HTTP refresh synchronizes owner task before the next received learner input without waiting for polling', async () => {
+  const h = await harness('openai', { heartbeatMs: 60000 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    h.advance(); await refreshClassroom(id);
+    socket.send(JSON.stringify({ type: 'text', text: 'Banana.' })); await waitFor(() => h.transcripts.length === 1);
+    assert.equal((h.transcripts[0] as { contextKey: string }).contextKey, `${id}:1:1`);
+    await waitFor(() => h.downstream.some(event => event.type === 'snapshot' && (event.classroom as ClassroomSnapshot).stepIndex === 1));
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('a refresh requested during an in-flight heartbeat is drained before both callers resolve and stop unsubscribes', async () => {
+  const h = await harness('openai', { heartbeatMs: 60000 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    h.delayNextHeartbeat(); const first = refreshClassroom(id); await waitFor(() => h.heartbeatCalls === 1);
+    h.advance(); const second = refreshClassroom(id); h.releaseHeartbeat(); await Promise.all([first, second]);
+    assert.equal(h.heartbeatCalls, 2);
+    await waitFor(() => h.downstream.some(event => event.type === 'snapshot' && (event.classroom as ClassroomSnapshot).revision === 2));
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close'); await waitFor(() => h.released === 1);
+    const before = h.heartbeatCalls; await refreshClassroom(id); assert.equal(h.heartbeatCalls, before);
+  } finally { await h.close(); }
+});
+
+test('a transcript handler may await authoritative refresh without cycling on its own transcript chain', async () => {
+  const h = await harness('openai', { heartbeatMs: 60000, refreshOnTranscript: true });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    socket.send(JSON.stringify({ type: 'text', text: 'Apple.' }));
+    await waitFor(() => h.downstream.some(event => event.type === 'snapshot' && (event.classroom as ClassroomSnapshot).stepIndex === 1));
+    assert.equal(h.transcripts.length, 1); assert.equal(h.tools.length, 0);
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close'); await waitFor(() => h.released === 1);
   } finally { await h.close(); }
 });
