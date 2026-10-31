@@ -37,6 +37,11 @@ const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const pathPattern = new RegExp(`^/ws/classrooms/(${UUID})$`, 'i');
 const tools = new Set(CLASSROOM_VOICE_TOOLS.map(tool => tool.name));
 const bounded = (value: unknown, length: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= length;
+function pcmRms(pcm: Buffer) {
+  let energy = 0;
+  for (let index = 0; index < pcm.length; index += 2) energy += (pcm.readInt16LE(index) / 32768) ** 2;
+  return Math.sqrt(energy / (pcm.length / 2));
+}
 function configFromEnvironment(provider: VoiceLease['provider']): ClassroomVoiceConfig {
   const env = (name: string) => (readRuntimeEnv(name) ?? '').trim();
   return provider === 'qwen'
@@ -110,7 +115,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     let voicedMs = 0, silentMs = 0, lastPcmAt = 0, utteranceTimer: ReturnType<typeof setTimeout> | undefined;
     let completedSpeech: { contextKey: string; itemId: string; used: boolean } | undefined, qwenSpeechKey: string | undefined;
     let gptInputQuietMs = 0, gptChildSpeaking = false;
-    let gptOutputGate: { ackId?: string; acknowledged: boolean; lastOutputAt: number; quietTimer?: ReturnType<typeof setTimeout>; deadline: ReturnType<typeof setTimeout> } | undefined;
+    let gptOutputGate: { ackId?: string; acknowledged: boolean; lastOutputAt: number; quietMs: number; deadline: ReturnType<typeof setTimeout> } | undefined;
     const currentKey = () => `${lease.id}:${lease.epoch}:${stepIndex}`;
     const protocol = lease.provider === 'qwen' ? createQwenProtocol({ model: config.model, voice: config.voice }) : null;
     type QwenQueued = { command?: VoiceCommand; raw?: string; cue: boolean; interrupts: boolean };
@@ -167,27 +172,20 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const clearPlayback = () => { outputPacer.clear(); toClient({ type: 'interrupt' }); };
     function clearGptOutputGate() {
       if (!gptOutputGate) return;
-      clearTimeout(gptOutputGate.quietTimer); clearTimeout(gptOutputGate.deadline); gptOutputGate = undefined;
+      clearTimeout(gptOutputGate.deadline); gptOutputGate = undefined;
     }
     function resumeGptOutput() {
       const gate = gptOutputGate;
-      if (!gate || !gate.acknowledged || gptInputQuietMs < 1200 || Date.now() - lastPcmAt > 500) return;
-      clearTimeout(gate.quietTimer);
-      const remaining = Math.max(0, gate.lastOutputAt + (options.gptOutputQuietMs ?? 500) - Date.now());
-      gate.quietTimer = setTimeout(() => {
-        if (stopped || gptOutputGate !== gate) return;
-        if (gate.acknowledged && gptInputQuietMs >= 1200 && Date.now() - lastPcmAt <= 500 && Date.now() >= gate.lastOutputAt + (options.gptOutputQuietMs ?? 500)) {
-          clearGptOutputGate();
-          const objective = lease.snapshot.course.steps[stepIndex]?.english ?? 'The lesson is finished.';
-          append('commentary', `Current objective: ${objective} Continue naturally from the learner's latest finished answer and the verified application state. Do not demand that they repeat a confirmed answer.`);
-        }
-      }, remaining);
+      if (stopped || !gate || !gate.acknowledged || gptInputQuietMs < 1200 || Date.now() - lastPcmAt > 500 || gate.quietMs < (options.gptOutputQuietMs ?? 500) || Date.now() - gate.lastOutputAt > 500) return;
+      clearGptOutputGate();
+      const objective = lease.snapshot.course.steps[stepIndex]?.english ?? 'The lesson is finished.';
+      append('commentary', `Current objective: ${objective} Continue naturally from the learner's latest finished answer and the verified application state. Do not demand that they repeat a confirmed answer.`);
     }
     function gateGptOutput() {
       if (protocol) return;
       clearPlayback();
-      if (!gptOutputGate) gptOutputGate = { acknowledged: false, lastOutputAt: Date.now(), deadline: setTimeout(() => { void stop('老师的声音暂时无法重新同步，请重新连接课堂。'); }, options.gptOutputWaitMs ?? 30000) };
-      else { clearTimeout(gptOutputGate.quietTimer); gptOutputGate.acknowledged = false; gptOutputGate.lastOutputAt = Date.now(); }
+      if (!gptOutputGate) gptOutputGate = { acknowledged: false, quietMs: 0, lastOutputAt: Date.now(), deadline: setTimeout(() => { void stop('老师的声音暂时无法重新同步，请重新连接课堂。'); }, options.gptOutputWaitMs ?? 30000) };
+      else { gptOutputGate.acknowledged = false; gptOutputGate.quietMs = 0; gptOutputGate.lastOutputAt = Date.now(); }
     }
     function bindGptOutputAck(id: string | false) {
       if (gptOutputGate) { gptOutputGate.ackId = id || undefined; gptOutputGate.acknowledged = false; }
@@ -345,9 +343,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     }
     function observePcm(audio: string) {
       if (protocol) return;
-      const pcm = Buffer.from(audio, 'base64'); let energy = 0;
-      for (let index = 0; index < pcm.length; index += 2) energy += (pcm.readInt16LE(index) / 32768) ** 2;
-      const audible = Math.sqrt(energy / (pcm.length / 2)) >= 0.015;
+      const pcm = Buffer.from(audio, 'base64'), audible = pcmRms(pcm) >= 0.015;
       if (lastPcmAt && Date.now() - lastPcmAt > 500) gptInputQuietMs = 0;
       lastPcmAt = Date.now();
       if (audible) {
@@ -433,8 +429,16 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         else if (event.type === 'session.output_audio.delta' && bounded(event.delta, Math.ceil(MAX_OUTPUT_BYTES / 3) * 4)) {
           // Live audio deltas have no response ID or cancellation acknowledgement.
           // Drop uncertain output until observed input silence, current context ACK
-          // and an output quiet window; this is conservative, not proven attribution.
-          if (gptOutputGate) { gptOutputGate.lastOutputAt = Date.now(); resumeGptOutput(); }
+          // and measured output silence. Live's media clock keeps emitting silent
+          // PCM too, so a network gap is neither required nor evidence of silence.
+          if (gptOutputGate) {
+            const pcm = Buffer.from(event.delta, 'base64');
+            if (!pcm.length || pcm.length % 2 || pcm.length > MAX_OUTPUT_BYTES || pcm.toString('base64') !== event.delta) { fail(); return; }
+            if (Date.now() - gptOutputGate.lastOutputAt > 500) gptOutputGate.quietMs = 0;
+            gptOutputGate.lastOutputAt = Date.now();
+            gptOutputGate.quietMs = pcmRms(pcm) < 0.015 ? Math.min(options.gptOutputQuietMs ?? 500, gptOutputGate.quietMs + pcm.length / 48) : 0;
+            resumeGptOutput();
+          }
           else outputPacer.enqueue(event.delta);
         } else if (event.type === 'session.thinking.appended' && gptOutputGate?.ackId && event.client_event_id === gptOutputGate.ackId) {
           gptOutputGate.acknowledged = true; resumeGptOutput();

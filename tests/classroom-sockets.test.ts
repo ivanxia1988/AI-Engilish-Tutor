@@ -523,7 +523,7 @@ test('GPT learner speech immediately clears playback and cannot replay late old 
   } finally { await h.close(); }
 });
 
-test('GPT task gate needs current context ACK, actual silent PCM and quiet output; uncertain new audio is also dropped', async () => {
+test('GPT task gate uses actual output silence despite continuous media frames and drops uncertain new speech', async () => {
   const output = outputClock(), h = await harness('openai', { heartbeatMs: 60000, audioClock: output.clock, gptOutputQuietMs: 80, contextVersion: 'version'.repeat(100) });
   try {
     const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
@@ -536,10 +536,13 @@ test('GPT task gate needs current context ACK, actual silent PCM and quiet outpu
     await new Promise(resolve => setTimeout(resolve, 90)); assert.equal(output.timers.size, 0);
     h.upstream!.send(JSON.stringify({ type: 'session.thinking.appended', client_event_id: context.event_id }));
     h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(2400, 0x33).toString('base64') }));
-    await new Promise(resolve => setTimeout(resolve, 40));
+    const quietFrame = JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(480).toString('base64') });
+    for (let i = 0; i < 7; i++) h.upstream!.send(quietFrame);
     h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(2400, 0x44).toString('base64') }));
-    await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(output.timers.size, 0);
-    await new Promise(resolve => setTimeout(resolve, 50));
+    for (let i = 0; i < 7; i++) h.upstream!.send(quietFrame);
+    await new Promise(resolve => setTimeout(resolve, 100)); assert.equal(output.timers.size, 0);
+    assert.equal(h.sent.filter(event => event.type === 'session.commentary.append').length, 2);
+    h.upstream!.send(quietFrame);
     await waitFor(() => h.sent.filter(event => event.type === 'session.commentary.append').length === 3);
     assert(String(h.sent.filter(event => event.type === 'session.commentary.append').at(-1)!.content).includes('Say the banana.'));
     h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(2400, 0x22).toString('base64') }));
@@ -570,6 +573,7 @@ test('closing GPT during the recovery quiet window never appends a late recovery
     h.advance(); await refreshClassroom(id); await waitFor(() => h.sent.filter(event => event.type === 'session.commentary.append').length === 2);
     h.upstream!.send(JSON.stringify({ type: 'session.thinking.appended', client_event_id: h.sent.filter(event => event.type === 'session.thinking.append').at(-1)!.event_id }));
     finishSpokenInput(socket); await waitFor(() => h.sent.filter(event => event.type === 'session.input_audio.append').length === 12);
+    for (let i = 0; i < 7; i++) h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(480).toString('base64') }));
     socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(h.sent.filter(event => event.type === 'session.commentary.append').length, 2);
