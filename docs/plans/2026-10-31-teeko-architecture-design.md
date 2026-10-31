@@ -1,10 +1,10 @@
 # Teeko 重构技术架构方案 · Railway
 
-日期：2026-10-31。版本：v0.3。状态：**部署平台Railway已由用户选定；详细架构待评审，未实施、未部署**。
+日期：2026-10-31。版本：v0.4。状态：**Railway已由用户选定；本地Node HTTP与任务契约基础已验证，完整服务迁移和部署尚未完成**。
 
 本版根据用户纠正完整替换上一版Cloudflare主方案。保留前端/课堂控制/模型分层，将数据库、实时会话、任务、文件与部署落实到Railway正式Node环境。Cloudflare只可选承担域名/DNS，不作为计算、数据库或任务系统的依赖。
 
-依据：[当前SPEC](../specs/teeko-v1/spec.md)、[验收场景](../specs/teeko-v1/acceptance.md)、本轮原型审阅和仓库实际实现。原始PRD与设计源保持不变。下文新增模块、表、接口和目录均为拟议设计，不是已经存在的运行时API。
+依据：[当前SPEC](../specs/teeko-v1/spec.md)、[验收场景](../specs/teeko-v1/acceptance.md)、本轮原型审阅和仓库实际实现。原始PRD与设计源保持不变。除第19节列出的本地基础切片外，下文模块、表、接口和目录仍为拟议设计，不能当作已接通的运行时API。
 
 ## 1. 已确定的主方案
 
@@ -25,7 +25,7 @@ Railway提供[常驻服务部署](https://docs.railway.com/build-deploy)、[私�
 
 - 8–13岁、电脑和平板浏览器，一个账号一个孩子，一次一节活动课堂。
 - 新增公开落地页介绍理念、上课方式与家长问题，进入邮箱注册/登录；预览不是匿名真实课堂。
-- 邮箱验证码注册后设置密码；后续密码登录，邮箱找回/重置。注册只保留《用户协议》一个入口。
+- 先验证私发邀请码，再验证邮箱并设置密码；后续密码登录，邮箱找回/重置。注册只保留《用户协议》一个入口。
 - 平级课程，无单元、年级、多孩子、单词本或支付；正式课程需人工校对和发布。
 - 设置选择GPT Live/通义、授课语言、风格、声音与音效；孩子课堂不展示供应商标签。
 - 教材为主，右侧Teeko形象与孩子头像；P0/P1不采集摄像头。工具仅指针、画笔、撤销，已取消慢一点与字幕等快捷菜单。
@@ -36,11 +36,11 @@ Railway提供[常驻服务部署](https://docs.railway.com/build-deploy)、[私�
 | 领域 | 当前代码事实 | Railway正式方案的处理 |
 |---|---|---|
 | 原型 | components/prototype提供27个有效状态，含新增00落地页；账号和业务示例仍在内存 | 原型继续审阅，正式入口读取服务端数据，不静默回落成演示成功 |
-| 框架 | vite.config.ts使用Vinext和Cloudflare Vite插件，worker/index.ts为Worker入口 | 迁移至正式Node生产构建，复用React/Next页面，不把开发服务器当生产运行时 |
+| 框架 | 默认仍为Vinext/Worker；已新增独立Next Node生产build/start与HTTP验证切片 | Node产物隔离到.next-node；正式受控WS与默认部署切换仍待实现 |
 | Railway配置 | Dockerfile与scripts/start-railway.mjs存在，但实际运行wrangler dev --local | 替换生产构建、启动、健康检查与优雅关闭；仅有这些文件不等于正式服务已就绪 |
 | 身份 | app/chatgpt-auth.ts依赖Sites身份头，在Railway返回未登录 | 改为自有AuthService与HttpOnly Cookie；公网传入的Sites头不构成身份 |
 | 数据 | lib/storage.ts使用IndexedDB；db/schema.ts为空；db/index.ts接D1 | Drizzle改PostgreSQL驱动，建立账号隔离与迁移；IndexedDB只做缓存和待确认事件 |
-| 配置 | lib/ai.ts、voice-server.ts等读取cloudflare:workers绑定 | 通过ServerConfig读取Railway服务端环境，前端只得到允许公开的能力信息 |
+| 配置 | lib/server/runtime-env.ts已按请求隔离Worker绑定，Node回退服务环境；建桥时捕获后续WS回调配置 | 该边界不等于正式账号/权限；前端只得到允许公开的能力信息 |
 | 实时 | GPT/通义现均有浏览器WebRTC路径；GPT已有客户端委派但无服务端sideband | Node持有服务器控制连接；通义正式中转需要新增，不伪称已有强制断流 |
 | WS中转 | voice-bridge等使用Worker WebSocket能力，现有中转覆盖豆包/智谱 | 复用协议和校验，替换为Node受控升级与WS连接；本轮只设计GPT/通义的正式路线 |
 | 互动 | classroom.ts、canvas-snapshot.ts、音频工具与测试可复用 | 与课程版本、服务端提交、取消和回执关联 |
@@ -364,12 +364,12 @@ PostgreSQL同一事务可以同时保存课堂终态、最小证据、结算状�
 | 数据与任务 | 推荐PostgreSQL事务状态/租约/额度/任务，独立Jobs进程；不依赖D1/DO/Workflows |
 | 文件 | 优先Railway S3兼容Bucket，实际地域、CORS、访问与费用待验证 |
 | 邮件 | Resend已由用户指定，凭据/发件域名/收件需在正式接入时核对 |
-| Node框架入口 | 推荐现有Next正式Node路线，同源受控WS；当前Vinext/Worker生产代码尚未迁移 |
+| Node框架入口 | 独立Next Node生产构建与HTTP已本地验证；默认仍保留Vinext，受控Node WS尚未迁移 |
 | 认证实现 | Better Auth + Drizzle PostgreSQL为候选，先验证OTP先于密码的完整流程 |
 | 额度/留存/首批课程与规模 | 仍待具体试用与产品参数确认，不把原型数字当承诺 |
 | 落地页与邀请 | 爸爸陪学长页和内存邀请流程已在/prototype#00；真实发码/准入、正式根路径尚未接入或部署 |
 
-本轮修订的是设计与独立前端原型，未创建Railway服务/数据库/Bucket，未改DNS、密钥、启动脚本或触发部署。
+设计和原型阶段未改变部署；本次新增的Node候选脚本与领域契约见第19节。未创建Railway服务/数据库/Bucket，未改DNS、密钥、默认启动命令或触发部署。
 
 ## 官方资料
 
@@ -381,3 +381,14 @@ PostgreSQL同一事务可以同时保存课堂终态、最小证据、结算状�
 - [Better Auth邮箱密码](https://better-auth.com/docs/authentication/email-password)、[OTP](https://better-auth.com/docs/plugins/email-otp)、[Drizzle适配](https://better-auth.com/docs/adapters/drizzle)。
 - [GPT Live服务端控制](https://developers.openai.com/api/docs/guides/voice-server-controls)、[委派](https://developers.openai.com/api/docs/guides/live-delegation)、[模型能力](https://developers.openai.com/api/docs/models/gpt-live-1)。
 - [通义WebRTC](https://help.aliyun.com/en/model-studio/realtime-webrtc-access)、[客户端事件](https://help.aliyun.com/en/model-studio/client-events)。
+
+## 19. 首批 worktree 实现与真实边界
+
+产品决定见[当前产品方向](../product/current-product-direction.md)，含00落地页的新老用户及课堂流见[页面流](../design/page-flow.md)，分工与提交见[并行计划](2026-10-31-parallel-foundation.md)。
+
+- Node G0切片：新增build:node/start:node，使用锁定Next版本的正式生产构建；.next-node和独立tsconfig避免与Vinext生成物互相覆盖。按请求注入Worker bindings，Node使用服务环境；旧Relay在建桥时捕获配置以保证请求结束后的外部事件不串配置。默认开发/Docker/Railway启动配置保留。
+- Node独立worktree已连续通过生产构建、显式本地HTTP冒烟、默认Vinext构建及typecheck。公开原型/状态/探针HTTP 200；匿名和伪造Sites身份的受保护请求401；测试监听关闭后端口释放并可重绑。见[Node验证记录](2026-10-31-node-g0-validation.md)。这证明HTTP候选入口，不是Railway生产部署或真实语音验收。
+- 领域切片：lib/domain/classroom-context.ts严格检查候选结果的会话、课程版本、连接代次、状态修订、页面和活动。非active或版本不一致时拒绝，返回冻结的候选副本；调用方须在实际提交时再次原子校验。45项测试通过，未接入真实课堂/PG，不能替代权限、租约、额度或幂等。见[契约验证记录](2026-10-31-classroom-context-validation.md)。
+- 主目录集成后107项定向与原型回归通过；默认测试中的1项生产冒烟按设计跳过，该冒烟已在干净Node worktree显式单独执行通过。类型检查和默认构建通过。
+
+G0仍未整体完成：Node WS升级与上游中转、GPT sideband、通义Node中转、PG/租约/额度、正式邀请/Resend认证、Jobs/Bucket、真实家庭设备与网络仍须继续。没有推送或部署。

@@ -7,7 +7,7 @@
 - 原 PRD 的待定项、未核实参数与技术能力保留原状态，汇总在 [decisions.md](decisions.md)。
 - 验收见 [acceptance.md](acceptance.md)，实施拆分见 [tasks.md](tasks.md)。
 
-- 部署平台已由用户选定Railway；[技术架构v0.3](../../plans/2026-10-31-teeko-architecture-design.md)按正式Node、PostgreSQL及独立任务进程设计，详细接入待验证，未迁移或部署。
+- 部署平台已由用户选定Railway；[技术架构v0.4](../../plans/2026-10-31-teeko-architecture-design.md)按正式Node、PostgreSQL及独立任务进程设计；Node生产构建/HTTP基础已本地验证，正式WS、账号、PG与部署仍待完成。
 
 ## 产品边界
 

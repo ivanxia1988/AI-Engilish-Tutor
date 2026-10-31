@@ -28,7 +28,7 @@
 
 - 目标：提供独立可执行的正式Node构建验证路线，识别并隔离Cloudflare专属导入，保留默认Vinext开发与Railway旧启动命令。
 - 不将Next构建成功当作WS升级、邮箱认证、PG或部署已完成；不能让公网伪造Sites身份。
-- A独占：lib/server/runtime-env.ts、lib/ai.ts、lib/voice-server.ts、app/api/voice/stream/route.ts（仅捕获当前请求配置）、worker/index.ts、scripts/run-node-framework.mjs、package.json中新增的build:node/start:node，以及独立runtime-env/node-framework测试与验证记录。next.config/tsconfig/lockfile/Docker/railway.json不自动修改。
+- A独占：lib/server/runtime-env.ts、lib/ai.ts、lib/voice-server.ts、app/api/voice/stream/route.ts（仅捕获当前请求配置）、worker/index.ts、scripts/run-node-framework.mjs、package.json中新增的build:node/start:node，以及独立runtime-env/node-framework测试与验证记录。后因生成物冲突，明确授权A最小修改next.config.ts、.gitignore并新增tsconfig.node.json：专用flag启用独立.next-node；基础tsconfig、lockfile、Docker、railway.json不改。
 - 最小方案为请求级AsyncLocalStorage绑定适配，Node读取服务端环境；保留Worker connector上下文。Node候选入口强制Railway身份隔离，匿名或伪造Sites头都不能获得业务权限。
 - 定向测试→typecheck→NEXT_TELEMETRY_DISABLED=1 npm run build:node→本地生产HTTP冒烟→默认Vinext构建回归。Next构建不是Node WS实现。
 
@@ -75,3 +75,18 @@ flowchart LR
 后续可并行，但须先冻结共享边界：账号与课程可在Node/数据契约后分开；两家供应商依赖同一课堂上下文/回执；报告依赖已提交证据和终态。不能让各分支分别设计互不兼容的登录、结束或报告状态。
 
 B分支来源提交：`ef845af`，45项上下文定向测试、typecheck、eslint与独立审阅通过。A分支审阅发现WS外部事件不自动继承请求AsyncLocalStorage，需在建桥时捕获该请求配置，避免原有Relay回归；未扩展为Node WS迁移。
+
+## 6. 首批集成结果
+
+| 路线 | 来源提交 | 主目录集成提交 | 结果 |
+|---|---|---|---|
+| B：任务上下文 | ef845af | 493b985 | 45项定向测试、类型检查、eslint及独立审阅通过；只接受仍属当前active范围的候选，未连接真实课堂 |
+| A：Node HTTP | 376b751 | 87592d0 | 21项运行时/旧语音定向测试通过，独立Next生产构建、显式HTTP冒烟、默认Vinext构建和typecheck连续通过；WS/账号/PG仍未完成 |
+
+主目录集成后运行108项：107通过、1项按设计默认跳过（Node生产冒烟已在无本地env文件的Node worktree用TEEKO_NODE_SMOKE=1显式运行1/1通过）。主目录typecheck、默认build、diff检查及当前文档链接/围栏检查通过。没有重复运行真实供应商连接或将这些检查称为家庭端到端验收。
+
+审阅中处理两项实际兼容问题：WS外部EventTarget消息不继承HTTP请求ALS，改为建桥时捕获当前连接配置；Next与Vinext覆盖同一.next/types，改为Node独立产物目录和专用类型配置。两项修复均有对应测试/连续构建证据，最终独立复查无阻塞项。
+
+两个worktree和源分支保留供回溯，生成物与只读依赖软链不提交。后续任务应从最新集成提交创建下一批分支，不把旧实验工作树的历史文档当最新产品决定。所有提交仅在本地，未push、未部署，未复制真实环境文件/凭据。
+
+下一批建议顺序：完成Node受控WS与连接关闭能力、确定正式PG/认证事务边界；再并行接邀请/邮箱账号和版本化课程，之后一节真实课、第二供应商与证据报告。未完成项在tasks和架构第19节保留明确状态。

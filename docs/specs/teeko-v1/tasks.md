@@ -27,7 +27,7 @@
 
 ## P0 分批任务
 
-2026-10-31用户确认部署平台已选定Railway，[技术架构v0.3](../../plans/2026-10-31-teeko-architecture-design.md)已替换上一版Cloudflare主方案；详细架构待评审，真实迁移尚未开始。G0验证Railway正式Node生产入口与WS、PostgreSQL状态/租约/额度/持久任务、独立teeko-jobs进程、S3兼容Bucket、Resend邮箱OTP→密码及找回、GPT服务器sideband、通义Node WS中转与强制关闭。Cloudflare只可选DNS，不作为计算/数据库/任务依赖。不能把现有Railway配置运行`wrangler dev --local`当作正式后端。
+2026-10-31用户确认部署平台已选定Railway，[技术架构v0.4](../../plans/2026-10-31-teeko-architecture-design.md)已替换上一版Cloudflare主方案；按方案分批接入；Node生产构建/HTTP与领域契约基础切片已验证，正式WS/账号/PG等仍未完成。G0验证Railway正式Node生产入口与WS、PostgreSQL状态/租约/额度/持久任务、独立teeko-jobs进程、S3兼容Bucket、Resend邮箱OTP→密码及找回、GPT服务器sideband、通义Node WS中转与强制关闭。Cloudflare只可选DNS，不作为计算/数据库/任务依赖。不能把现有Railway配置运行`wrangler dev --local`当作正式后端。
 
 - [ ] TK-T-01 · 关闭影响首批开发的范围与依赖缺口，验证Railway正式Node、PG、任务和认证接入，明确课程样本。关联 TK-D-001/004/010/011/012/013/015。
 - [ ] TK-T-02 · 接入Railway真实邀请码生成/停用/过期/原子兑换、邮箱注册及登录同意、最少档案、P0 选课与恢复。关联 TK-R-001/002/003；TK-AC-001–003。
@@ -48,8 +48,8 @@ P1 和 P2 仅登记范围，开始前分别补充规格、验收及实现计划�
 
 - [x] 将已聊过的架构倾向写入[当前产品方向](../../product/current-product-direction.md)，含低营销分享定位和私发邀请制。
 - [x] 将加入00落地页后的27状态、新老用户与课堂异常路径写入[页面流](../../design/page-flow.md)，并记录原型快捷路径与正式收敛要求。
-- [ ] 第一批A：独立Node生产构建兼容性验证，保留现有默认开发/部署入口。
-- [ ] 第一批B：课堂任务上下文围栏契约与竞态场景测试；尚不接真实课堂或PG。
-- [ ] 每个分支检查后逐项集成；记录构建/契约通过与WS/认证/PG/真实服务尚未通过的边界。
+- [x] 第一批A：独立Node生产构建/HTTP切片通过，生成物隔离、请求环境与WS回调配置捕获验证；保留默认开发/部署入口，Node WS/认证/PG未完成。
+- [x] 第一批B：课堂任务上下文围栏契约45项测试与审阅通过，已集成；尚不接真实课堂或PG。
+- [x] 两条worktree分支经审阅逐项集成；主目录107项定向/原型测试、typecheck和默认构建通过，生产HTTP冒烟单独通过；WS/认证/PG/真实服务仍待后续G0/G1。
 
 执行及worktree信息见[并行计划](../../plans/2026-10-31-parallel-foundation.md)。

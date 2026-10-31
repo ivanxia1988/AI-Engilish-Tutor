@@ -37,7 +37,7 @@
 
 2026-10-31追加登录审阅：字段“邮箱”，注册只展示《用户协议》一个入口，删除家长身份声明和独立儿童规则链接。此决定是界面结构取舍，不认定正式协议/数据处理要求已完成；适用发布文案仍由TK-D-015核对。密码8–64位和验证码5分钟仅为当前原型审阅参数。
 
-2026-10-31用户纠正部署决定：**Railway已经选定**，不再把运行平台作为开放选择。现行架构改为Node Web/API/WS、PostgreSQL、独立后台进程、S3兼容Bucket和Resend；Cloudflare仅可选DNS。上一版Cloudflare计算、D1/DO/Workflows主方案撤回。详细方案与G0验证见[架构v0.3](../../plans/2026-10-31-teeko-architecture-design.md)，不表示已经实施。
+2026-10-31用户纠正部署决定：**Railway已经选定**，不再把运行平台作为开放选择。现行架构改为Node Web/API/WS、PostgreSQL、独立后台进程、S3兼容Bucket和Resend；Cloudflare仅可选DNS。上一版Cloudflare计算、D1/DO/Workflows主方案撤回。详细方案与G0验证见[架构v0.4](../../plans/2026-10-31-teeko-architecture-design.md)，不表示已经实施。
 
 2026-10-31补充公开落地页：00展示Teeko理念、上课方式与家长问题，开始学习进入注册，登录进入密码登录；课堂为可点选的本地示意。正式根路径与SEO另行接入，当前真实课堂不变。关联TK-R-024/TK-AC-036。
 

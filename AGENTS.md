@@ -23,7 +23,7 @@
 - 防误触保护课中退出：结束先确认，默认继续、Esc取消；未结束课堂的刷新/关闭注册浏览器离开提醒，结束后撤除。不要恢复家长算术题门槛。
 - 需求原文的供应商 API、价格、合规与实验结论在实施前按任务核对，不因归档就描述为本项目已验证事实。
 
-- 部署平台已由用户选定Railway，现行方案见[架构v0.3](docs/plans/2026-10-31-teeko-architecture-design.md)。正式Node Web/API/WS、PostgreSQL、独立任务进程为规划；Cloudflare仅可选DNS，不恢复D1/DO/Workflows主方案。现有开发运行配置不等同于完成生产迁移。
+- 部署平台已由用户选定Railway，现行方案见[架构v0.4](docs/plans/2026-10-31-teeko-architecture-design.md)。已有独立Next Node HTTP候选与任务范围契约通过首批验证，正式Node WS、PostgreSQL、独立任务进程仍为规划；Cloudflare仅可选DNS，不恢复D1/DO/Workflows主方案。现有开发运行配置不等同于完成生产迁移。
 
 ## 前端设计入口
 
