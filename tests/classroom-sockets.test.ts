@@ -16,7 +16,7 @@ const waitFor = async (condition: () => boolean) => {
   const end = Date.now() + 2000;
   while (!condition()) { if (Date.now() >= end) throw new Error('Expected socket event did not arrive.'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
-async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; audioClock?: PcmOutputClock } = {}) {
+async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string } = {}) {
   const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp });
   const sent: Record<string, unknown>[] = [], downstream: Record<string, unknown>[] = [], transcripts: unknown[] = [], tools: unknown[] = [];
   let upstream: WebSocket | undefined, opened = 0, released = 0, heartbeatAllowed = true, current = snapshot, resolveTool: (() => void) | undefined, resolveTranscript: (() => void) | undefined, persistedStarts = 0;
@@ -60,6 +60,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
     connect: () => new WebSocket(`ws://127.0.0.1:${vendorAddress.port}`),
     heartbeatMs: extra.heartbeatMs ?? 25, startupMs: extra.startupMs ?? 1000, closeMs: 30, utteranceSettleMs: 20, responseAckMs: extra.responseAckMs ?? 1000,
     audioClock: extra.audioClock,
+    gptOutputQuietMs: extra.gptOutputQuietMs, gptOutputWaitMs: extra.gptOutputWaitMs,
   });
   app.listen(0, '127.0.0.1'); await once(app, 'listening');
   const address = app.address(); assert(address && typeof address !== 'string');
@@ -69,7 +70,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
     socket.on('message', data => downstream.push(JSON.parse(data.toString())));
     return socket;
   };
-  return { connect, sent, downstream, transcripts, tools, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, get heartbeatCalls() { return heartbeatCalls; }, delayNextHeartbeat: () => { delayHeartbeat = true; }, releaseHeartbeat: () => releaseHeartbeat?.(), revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1 }; }, feedback: (message = 'Try once more.') => { current = { ...current, revision: current.revision + 1, feedback: { id: `feedback_${current.revision + 1}`, kind: 'retry', message } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
+  return { connect, sent, downstream, transcripts, tools, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, get heartbeatCalls() { return heartbeatCalls; }, delayNextHeartbeat: () => { delayHeartbeat = true; }, releaseHeartbeat: () => releaseHeartbeat?.(), revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1, course: { ...snapshot.course, version: extra.contextVersion ?? snapshot.course.version } }; }, feedback: (message = 'Try once more.') => { current = { ...current, revision: current.revision + 1, feedback: { id: `feedback_${current.revision + 1}`, kind: 'retry', message } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
 }
 
 function pcmFrame(voiced: boolean) {
@@ -480,5 +481,96 @@ test('a new task clears already-generated Qwen audio even after response.done an
     await waitFor(() => output.timers.size === 1); output.advance(0); await waitFor(() => h.downstream.filter(event => event.type === 'audio').length === before + 1);
     assert.equal(Buffer.from(String(h.downstream.filter(event => event.type === 'audio').at(-1)!.audio), 'base64')[0], 0x22);
     socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('Qwen same-task tool continuation preserves every queued PCM byte across response boundaries', async () => {
+  const output = outputClock(), h = await harness('qwen', { delayedResponses: true, heartbeatMs: 60000, audioClock: output.clock });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
+    h.upstream!.send(JSON.stringify({ type: 'response.created' }));
+    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: Buffer.alloc(144000, 0x11).toString('base64') }));
+    h.upstream!.send(JSON.stringify({ type: 'response.function_call_arguments.done', name: 'highlight_objects', call_id: 'continuation', arguments: JSON.stringify({ contextKey: `${id}:1:0`, objectIds: ['apple'] }) }));
+    h.upstream!.send(JSON.stringify({ type: 'response.done' }));
+    await waitFor(() => h.sent.filter(event => event.type === 'response.create').length === 2);
+    h.upstream!.send(JSON.stringify({ type: 'response.created' }));
+    h.upstream!.send(JSON.stringify({ type: 'response.audio.delta', delta: Buffer.alloc(4800, 0x22).toString('base64') }));
+    h.upstream!.send(JSON.stringify({ type: 'response.done' }));
+    await new Promise(resolve => setTimeout(resolve, 10)); output.advance(4000);
+    await waitFor(() => h.downstream.filter(event => event.type === 'audio').length >= 2);
+    const bytes = Buffer.concat(h.downstream.filter(event => event.type === 'audio').map(event => Buffer.from(String(event.audio), 'base64')));
+    assert.equal(bytes.length, 148800); assert(bytes.subarray(0, 144000).every(value => value === 0x11)); assert(bytes.subarray(144000).every(value => value === 0x22));
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('GPT learner speech immediately clears playback and cannot replay late old audio during speech or missing PCM', async () => {
+  const output = outputClock(), h = await harness('openai', { heartbeatMs: 60000, audioClock: output.clock });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(144000, 0x11).toString('base64') }));
+    await waitFor(() => output.timers.size === 1); output.advance(0); await waitFor(() => h.downstream.some(event => event.type === 'audio'));
+    const before = h.downstream.filter(event => event.type === 'audio').length, interrupts = h.downstream.filter(event => event.type === 'interrupt').length;
+    socket.send(pcmFrame(true));
+    await waitFor(() => h.sent.some(event => event.type === 'session.input_audio.append'));
+    h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(2400, 0x33).toString('base64') }));
+    await new Promise(resolve => setTimeout(resolve, 20)); output.advance(7000); await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(h.downstream.filter(event => event.type === 'audio').length, before);
+    assert(h.downstream.filter(event => event.type === 'interrupt').length > interrupts);
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close'); assert.equal(output.timers.size, 0);
+  } finally { await h.close(); }
+});
+
+test('GPT task gate needs current context ACK, actual silent PCM and quiet output; uncertain new audio is also dropped', async () => {
+  const output = outputClock(), h = await harness('openai', { heartbeatMs: 60000, audioClock: output.clock, gptOutputQuietMs: 80, contextVersion: 'version'.repeat(100) });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(144000, 0x11).toString('base64') }));
+    await waitFor(() => output.timers.size === 1);
+    h.advance(); await refreshClassroom(id); await waitFor(() => h.sent.filter(event => event.type === 'session.commentary.append').length === 2);
+    const contexts = h.sent.filter(event => event.type === 'session.thinking.append'), context = contexts.at(-1)!; assert(contexts.length > 1);
+    h.upstream!.send(JSON.stringify({ type: 'session.thinking.appended', client_event_id: contexts[0].event_id }));
+    finishSpokenInput(socket); await waitFor(() => h.sent.filter(event => event.type === 'session.input_audio.append').length === 12);
+    await new Promise(resolve => setTimeout(resolve, 90)); assert.equal(output.timers.size, 0);
+    h.upstream!.send(JSON.stringify({ type: 'session.thinking.appended', client_event_id: context.event_id }));
+    h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(2400, 0x33).toString('base64') }));
+    await new Promise(resolve => setTimeout(resolve, 40));
+    h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(2400, 0x44).toString('base64') }));
+    await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(output.timers.size, 0);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await waitFor(() => h.sent.filter(event => event.type === 'session.commentary.append').length === 3);
+    assert(String(h.sent.filter(event => event.type === 'session.commentary.append').at(-1)!.content).includes('Say the banana.'));
+    h.upstream!.send(JSON.stringify({ type: 'session.output_audio.delta', delta: Buffer.alloc(2400, 0x22).toString('base64') }));
+    await waitFor(() => output.timers.size === 1); output.advance(0); await waitFor(() => h.downstream.some(event => event.type === 'audio'));
+    const frames = h.downstream.filter(event => event.type === 'audio'); assert.equal(frames.length, 1);
+    assert(Buffer.from(String(frames[0].audio), 'base64').every(value => value === 0x22));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(h.sent.filter(event => event.type === 'session.commentary.append').length, 3);
+    assert.equal(h.sent.filter(event => event.type === 'session.start').length, 1);
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+  } finally { await h.close(); }
+});
+
+test('GPT output gate has a bounded wait and closing it releases every queued frame', async () => {
+  const output = outputClock(), h = await harness('openai', { heartbeatMs: 60000, audioClock: output.clock, gptOutputWaitMs: 60 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    socket.send(pcmFrame(true)); await once(socket, 'close'); await waitFor(() => h.released === 1);
+    output.advance(60000); assert.equal(output.timers.size, 0);
+    assert(h.downstream.some(event => event.type === 'error')); assert.notEqual(h.upstream?.readyState, WebSocket.OPEN);
+  } finally { await h.close(); }
+});
+
+test('closing GPT during the recovery quiet window never appends a late recovery cue or opens another session', async () => {
+  const h = await harness('openai', { heartbeatMs: 60000, gptOutputQuietMs: 80 });
+  try {
+    const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    h.advance(); await refreshClassroom(id); await waitFor(() => h.sent.filter(event => event.type === 'session.commentary.append').length === 2);
+    h.upstream!.send(JSON.stringify({ type: 'session.thinking.appended', client_event_id: h.sent.filter(event => event.type === 'session.thinking.append').at(-1)!.event_id }));
+    finishSpokenInput(socket); await waitFor(() => h.sent.filter(event => event.type === 'session.input_audio.append').length === 12);
+    socket.send(JSON.stringify({ type: 'close' })); await once(socket, 'close');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(h.sent.filter(event => event.type === 'session.commentary.append').length, 2);
+    assert.equal(h.sent.filter(event => event.type === 'session.start').length, 1); assert.equal(h.opened, 1); assert.equal(h.released, 1);
   } finally { await h.close(); }
 });

@@ -29,6 +29,7 @@ export type ClassroomSocketOptions = {
   config?: (provider: VoiceLease['provider']) => ClassroomVoiceConfig;
   connect?: (url: string, headers: Record<string, string>) => WebSocket;
   heartbeatMs?: number; startupMs?: number; closeMs?: number; utteranceSettleMs?: number; responseAckMs?: number;
+  gptOutputQuietMs?: number; gptOutputWaitMs?: number;
   audioClock?: PcmOutputClock;
 };
 const MAX_BUFFER = 256_000, MAX_OUTPUT_BYTES = 192_000;
@@ -108,6 +109,8 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     let utterance = '', utteranceKey = `${lease.id}:${lease.epoch}:${stepIndex}`, utteranceOverflow = false;
     let voicedMs = 0, silentMs = 0, lastPcmAt = 0, utteranceTimer: ReturnType<typeof setTimeout> | undefined;
     let completedSpeech: { contextKey: string; itemId: string; used: boolean } | undefined, qwenSpeechKey: string | undefined;
+    let gptInputQuietMs = 0, gptChildSpeaking = false;
+    let gptOutputGate: { ackId?: string; acknowledged: boolean; lastOutputAt: number; quietTimer?: ReturnType<typeof setTimeout>; deadline: ReturnType<typeof setTimeout> } | undefined;
     const currentKey = () => `${lease.id}:${lease.epoch}:${stepIndex}`;
     const protocol = lease.provider === 'qwen' ? createQwenProtocol({ model: config.model, voice: config.voice }) : null;
     type QwenQueued = { command?: VoiceCommand; raw?: string; cue: boolean; interrupts: boolean };
@@ -125,9 +128,9 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const toClient = (event: unknown) => send(client, event);
     const append = (kind: 'thinking' | 'commentary', content: string, delegationId: string | null = null) => {
       const chunks = kind === 'thinking' ? contextChunks(content) : [spokenUpdate(content)];
-      let accepted = true;
-      for (const chunk of chunks) accepted = send(upstream, { type: `session.${kind}.append`, event_id: eventId(), delegation_id: delegationId, content: chunk }) && accepted;
-      return accepted;
+      let accepted = true, lastId = '';
+      for (const chunk of chunks) { lastId = eventId(); accepted = send(upstream, { type: `session.${kind}.append`, event_id: lastId, delegation_id: delegationId, content: chunk }) && accepted; }
+      return accepted ? lastId : false;
     };
     const finish = () => {
       if (finalized) return;
@@ -140,6 +143,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       unsubscribeRefresh();
       stopped = true; timers.forEach(timer => clearTimeout(timer)); timers.clear(); clearInterval(heartbeatTimer); clearInterval(pingTimer);
       outputPacer.close();
+      clearGptOutputGate();
       resetUtterance();
       if (message) toClient({ type: 'error', message });
       toClient({ type: 'interrupt' });
@@ -161,6 +165,33 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const fail = () => { void stop('实时语音连接未完成，请检查网络或重新连接。'); };
     const outputPacer = new PcmOutputPacer({ send: audio => toClient({ type: 'audio', audio, sampleRate: 24000 }), error: message => { void stop(message); } }, options.audioClock);
     const clearPlayback = () => { outputPacer.clear(); toClient({ type: 'interrupt' }); };
+    function clearGptOutputGate() {
+      if (!gptOutputGate) return;
+      clearTimeout(gptOutputGate.quietTimer); clearTimeout(gptOutputGate.deadline); gptOutputGate = undefined;
+    }
+    function resumeGptOutput() {
+      const gate = gptOutputGate;
+      if (!gate || !gate.acknowledged || gptInputQuietMs < 1200 || Date.now() - lastPcmAt > 500) return;
+      clearTimeout(gate.quietTimer);
+      const remaining = Math.max(0, gate.lastOutputAt + (options.gptOutputQuietMs ?? 500) - Date.now());
+      gate.quietTimer = setTimeout(() => {
+        if (stopped || gptOutputGate !== gate) return;
+        if (gate.acknowledged && gptInputQuietMs >= 1200 && Date.now() - lastPcmAt <= 500 && Date.now() >= gate.lastOutputAt + (options.gptOutputQuietMs ?? 500)) {
+          clearGptOutputGate();
+          const objective = lease.snapshot.course.steps[stepIndex]?.english ?? 'The lesson is finished.';
+          append('commentary', `Current objective: ${objective} Continue naturally from the learner's latest finished answer and the verified application state. Do not demand that they repeat a confirmed answer.`);
+        }
+      }, remaining);
+    }
+    function gateGptOutput() {
+      if (protocol) return;
+      clearPlayback();
+      if (!gptOutputGate) gptOutputGate = { acknowledged: false, lastOutputAt: Date.now(), deadline: setTimeout(() => { void stop('老师的声音暂时无法重新同步，请重新连接课堂。'); }, options.gptOutputWaitMs ?? 30000) };
+      else { clearTimeout(gptOutputGate.quietTimer); gptOutputGate.acknowledged = false; gptOutputGate.lastOutputAt = Date.now(); }
+    }
+    function bindGptOutputAck(id: string | false) {
+      if (gptOutputGate) { gptOutputGate.ackId = id || undefined; gptOutputGate.acknowledged = false; }
+    }
     const clearQwenTimer = (timer: ReturnType<typeof setTimeout> | undefined) => { if (timer) { clearTimeout(timer); timers.delete(timer); } };
     const awaitQwenResponse = () => {
       clearQwenTimer(qwenResponseTimer);
@@ -170,7 +201,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       if (stopped) return;
       const type = (JSON.parse(raw) as { type: string }).type;
       if (type === 'response.create') {
-        clearPlayback(); qwenOutputAllowed = false; qwenApplicationReplyKey = currentKey();
+        qwenOutputAllowed = false; qwenApplicationReplyKey = currentKey();
         qwenApplicationPending = true; qwenResponseState = 'pending'; awaitQwenResponse();
       }
       if (!send(upstream, raw)) fail();
@@ -213,6 +244,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       if (command.type === 'context') qwenQueue = qwenQueue.filter(item => item.command?.type !== 'context');
       if (command.type === 'speak' || command.type === 'tool_result') qwenQueue = qwenQueue.filter(item => !item.cue);
       const item = { command, cue: command.type === 'speak', interrupts: command.type === 'speak' || command.type === 'user_text' };
+      if (item.interrupts) { qwenOutputAllowed = false; clearPlayback(); }
       if (command.type === 'context') qwenQueue.unshift(item); else qwenQueue.push(item);
       if (qwenQueue.length > 30) { fail(); return; }
       pumpQwen();
@@ -223,17 +255,17 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const context = (snapshot: ClassroomSnapshot, instructions: string, cue: boolean) => {
       if (stopped || snapshot.revision < revision) return;
       const taskChanged = snapshot.stepIndex !== stepIndex, feedbackChanged = snapshot.feedback?.id !== feedbackId;
-      if (taskChanged) { resetUtterance(); qwenOutputAllowed = false; clearPlayback(); }
+      if (taskChanged) { resetUtterance(); qwenOutputAllowed = false; if (protocol) clearPlayback(); else gateGptOutput(); }
       revision = snapshot.revision; stepIndex = snapshot.stepIndex; feedbackId = snapshot.feedback?.id;
       toClient({ type: 'snapshot', classroom: snapshot });
       const step = snapshot.course.steps[snapshot.stepIndex];
       if (protocol) enqueueQwen({ type: 'context', instructions });
-      else append('thinking', JSON.stringify({ contextKey: currentKey(), revision: snapshot.revision, courseVersion: snapshot.course.version,
+      else bindGptOutputAck(append('thinking', JSON.stringify({ contextKey: currentKey(), revision: snapshot.revision, courseVersion: snapshot.course.version,
         task: step ? { id: step.id, kind: step.kind, prompt: step.english } : null,
         objects: snapshot.course.pages.find(page => page.id === step?.pageId)?.objects.map(object => ({ id: object.id, label: object.label })),
         teacherObjectIds: snapshot.teacherObjectIds,
         feedback: snapshot.feedback ? { kind: snapshot.feedback.kind, message: snapshot.feedback.message.slice(0, 240) } : null,
-      }));
+      })));
       if (cue && (taskChanged || feedbackChanged)) speak(`Current objective: ${step?.english ?? 'The lesson is finished.'} ${taskChanged
         ? 'Briefly acknowledge the verified previous result, ask this current question naturally, then listen.'
         : `Latest verified feedback: ${snapshot.feedback?.message.slice(0, 100) ?? 'Use the current picture.'} Give one useful clue if needed, then listen without repeating the same demand.`}`);
@@ -314,14 +346,22 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       const pcm = Buffer.from(audio, 'base64'); let energy = 0;
       for (let index = 0; index < pcm.length; index += 2) energy += (pcm.readInt16LE(index) / 32768) ** 2;
       const audible = Math.sqrt(energy / (pcm.length / 2)) >= 0.015;
+      if (lastPcmAt && Date.now() - lastPcmAt > 500) gptInputQuietMs = 0;
       lastPcmAt = Date.now();
       if (audible) {
+        gptInputQuietMs = 0;
+        if (!gptChildSpeaking) {
+          gptChildSpeaking = true; gateGptOutput();
+          bindGptOutputAck(append('thinking', 'The learner is speaking now. Listen without speaking over them. Resume only after their answer is finished.'));
+        }
         if (!voicedMs) utteranceKey = currentKey();
         voicedMs += 100; silentMs = 0;
         if (utteranceTimer) clearTimeout(utteranceTimer); utteranceTimer = undefined;
-      } else if (voicedMs) {
-        silentMs += 100;
-        if (silentMs === 1200) scheduleUtterance();
+      } else {
+        gptInputQuietMs = Math.min(1200, gptInputQuietMs + 100);
+        if (gptInputQuietMs >= 1200) gptChildSpeaking = false;
+        resumeGptOutput();
+        if (voicedMs) { silentMs += 100; if (silentMs === 1200) scheduleUtterance(); }
       }
     }
     const becomeReady = () => {
@@ -357,7 +397,6 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
             becomeReady(); pumpQwen();
           }
           else if (value.type === 'response_start') {
-            clearPlayback();
             if (qwenApplicationPending) { qwenApplicationPending = false; qwenReplyKey = qwenApplicationReplyKey; }
             else { qwenVadPending = false; qwenReplyKey = qwenVadReplyKey ?? currentKey(); }
             if (qwenResponseState !== 'cancelling') { clearQwenTimer(qwenResponseTimer); qwenResponseTimer = undefined; qwenResponseState = 'active'; }
@@ -390,7 +429,13 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       } else {
         if (event.type === 'session.started') void providerStarted((event.session as { id?: unknown } | undefined)?.id, false);
         else if (event.type === 'session.output_audio.delta' && bounded(event.delta, Math.ceil(MAX_OUTPUT_BYTES / 3) * 4)) {
-          outputPacer.enqueue(event.delta);
+          // Live audio deltas have no response ID or cancellation acknowledgement.
+          // Drop uncertain output until observed input silence, current context ACK
+          // and an output quiet window; this is conservative, not proven attribution.
+          if (gptOutputGate) { gptOutputGate.lastOutputAt = Date.now(); resumeGptOutput(); }
+          else outputPacer.enqueue(event.delta);
+        } else if (event.type === 'session.thinking.appended' && gptOutputGate?.ackId && event.client_event_id === gptOutputGate.ackId) {
+          gptOutputGate.acknowledged = true; resumeGptOutput();
         } else if ((event.type === 'session.input_transcript.delta' || event.type === 'session.output_transcript.delta') && bounded(event.delta, 6000)) {
           record(event.type === 'session.input_transcript.delta' ? 'child' : 'teacher', event.delta, false);
           if (event.type === 'session.input_transcript.delta') {
