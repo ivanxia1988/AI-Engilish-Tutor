@@ -42,7 +42,7 @@ export function accountCookie(request: Request, name: 'teeko_session' | 'teeko_f
   const token = matches[0].slice(name.length + 1);
   return /^[A-Za-z0-9_-]{32,128}$/.test(token) ? token : undefined;
 }
-async function boundedJson(request: Request): Promise<unknown> {
+export async function boundedJson(request: Request): Promise<unknown> {
   if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') throw new HttpProblem('CONTENT_TYPE', '请使用 JSON 请求。', 415);
   const declared = Number(request.headers.get('content-length') || '0');
   if (!Number.isFinite(declared) || declared < 0 || declared > 8192) throw new HttpProblem('BODY_TOO_LARGE', '请求内容过长。', 413);

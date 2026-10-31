@@ -30,3 +30,12 @@ test('Node production mode disables telemetry and never accepts Sites identity h
   assert.equal(result.PORT, '3456');
   assert.equal(input.LITTLELEAF_HOSTING, 'sites');
 });
+
+test('production process uses the controlled classroom WebSocket server', async () => {
+  const framework = await import('../scripts/run-node-framework.mjs');
+  assert.equal(typeof framework.nodeFrameworkProcessArguments, 'function');
+  const args=framework.nodeFrameworkProcessArguments('start',{PORT:'3456'});
+  assert.deepEqual(args.slice(0,2),['--import','tsx']);
+  assert(args[2].endsWith('/scripts/serve-node.mjs'));
+  assert(framework.nodeFrameworkProcessArguments('build',{}).includes('--webpack'));
+});
