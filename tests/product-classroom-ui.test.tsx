@@ -35,19 +35,20 @@ test('published courses offer one real start action and never request microphone
  assert.equal(mediaCalls,0);
 });
 
-function fixture(initial:ClassroomSnapshot=snapshot){
- const calls:{path:string,body?:{type?:string}}[]=[];
+function fixture(initial:ClassroomSnapshot=snapshot,behavior:{pauseOnStop?:boolean}={}){
+ const calls:{path:string,body?:{type?:string;expectedRevision?:number}}[]=[];
  let current=initial, stops=0,starts=0,disposes=0;
  let callbacks:Parameters<import('../components/product/classroom.tsx').VoiceFactory>[0]|null=null;
  globalThis.fetch=async(input,init)=>{
   const body=typeof init?.body==='string'?JSON.parse(init.body):undefined;calls.push({path:String(input),body});
+  if(body?.expectedRevision!==undefined&&body.expectedRevision!==current.revision)return Response.json({ok:false,error:{code:'STALE_REVISION',message:'课堂已经更新，请重新试一次。'}},{status:409});
   if(body?.type==='pause')current={...current,status:'paused',revision:current.revision+1};
   if(body?.type==='resume')current={...current,status:'preflight',revision:current.revision+1};
   if(body?.type==='end')current={...current,status:'ended',revision:current.revision+1,endReason:'manual',endedAt:'2026-11-01T00:01:00Z',elapsedSeconds:60};
   return Response.json({ok:true,classroom:current});
  };
- const voiceFactory:import('../components/product/classroom.tsx').VoiceFactory=options=>{callbacks=options;return{async start(){starts++;current={...current,status:'active',revision:current.revision+1};options.onSnapshot(current);options.onState('connected');},async stop(){stops++;options.onState('closed');},dispose(){disposes++;},setMuted(){},sendText(){}};};
- return{calls,voiceFactory,checkMicrophone:async()=>true,get starts(){return starts;},get stops(){return stops;},get disposes(){return disposes;},emit(next:ClassroomSnapshot){current=next;callbacks?.onSnapshot(next);}};
+ const voiceFactory:import('../components/product/classroom.tsx').VoiceFactory=options=>{callbacks=options;return{async start(){starts++;current={...current,status:'active',revision:current.revision+1};options.onSnapshot(current);options.onState('connected');},async stop(){stops++;if(behavior.pauseOnStop)current={...current,status:'paused',revision:current.revision+1};options.onState('closed');},dispose(){disposes++;},setMuted(){},sendText(){}};};
+ return{calls,voiceFactory,checkMicrophone:async()=>true,get starts(){return starts;},get stops(){return stops;},get disposes(){return disposes;},disconnect(next:ClassroomSnapshot,state:'closed'|'error'='closed'){current=next;callbacks?.onState(state);},emit(next:ClassroomSnapshot){current=next;callbacks?.onSnapshot(next);}};
 }
 
 test('classroom asks for microphone only after the check click and connects on a separate start gesture',async()=>{
@@ -124,4 +125,55 @@ test('a pending connection replaces preflight with an accessible cancel action',
  await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
  check(screen.getByRole('button',{name:'取消连接'}));check(!screen.queryByRole('region',{name:'准备上课'}));
  fireEvent.click(screen.getByRole('button',{name:'取消连接'}));await waitFor(()=>assert.equal(stopped,1));
+});
+
+
+test('ending uses the revision after media close and succeeds with one confirmation',async()=>{
+ const f=fixture(snapshot,{pauseOnStop:true});render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
+ await waitFor(()=>check(screen.getByRole('button',{name:'结束课堂'})));fireEvent.click(screen.getByRole('button',{name:'结束课堂'}));fireEvent.click(screen.getByRole('button',{name:'结束并保存'}));
+ await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));
+ const endings=f.calls.filter(call=>call.body?.type==='end');assert.equal(endings.length,1);assert.equal(endings[0].body?.expectedRevision,2);
+});
+
+test('pause accepts a server-confirmed close transition without posting a stale pause action',async()=>{
+ const f=fixture(snapshot,{pauseOnStop:true});render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
+ await waitFor(()=>check(screen.getByRole('button',{name:'暂停课堂'})));fireEvent.click(screen.getByRole('button',{name:'暂停课堂'}));
+ await waitFor(()=>check(screen.getByRole('heading',{name:'已暂停'})));assert.equal(f.calls.filter(call=>call.body?.type==='pause').length,0);check(!screen.queryByRole('alert'));
+});
+
+test('server end observed only after socket closure is reread into the terminal summary',async()=>{
+ const f=fixture();render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
+ await waitFor(()=>assert.equal(f.starts,1));f.disconnect({...snapshot,status:'ended',revision:3,endReason:'time_limit',endedAt:'2026-11-01T00:10:00Z',elapsedSeconds:600});
+ await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));check(screen.getByText('本次课堂时间已到，进度已保留。'));assert.equal(f.starts,1);
+});
+
+test('close-related revision conflicts retry once with the same event ID',async()=>{
+ const f=fixture(snapshot,{pauseOnStop:true}),baseFetch=globalThis.fetch;const endings:{eventId:string;expectedRevision:number}[]=[];
+ let race=true;
+ globalThis.fetch=async(input,init)=>{
+  if(String(input).endsWith('/actions')&&typeof init?.body==='string'&&JSON.parse(init.body).type==='end'){
+   const body=JSON.parse(init.body);endings.push(body);
+   if(race){race=false;return Response.json({ok:false,error:{code:'STALE_REVISION',message:'课堂已经更新。'}},{status:409});}
+  }
+  return baseFetch(input,init);
+ };
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
+ await waitFor(()=>check(screen.getByRole('button',{name:'结束课堂'})));fireEvent.click(screen.getByRole('button',{name:'结束课堂'}));fireEvent.click(screen.getByRole('button',{name:'结束并保存'}));
+ await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));assert.equal(endings.length,2);assert.equal(endings[0].eventId,endings[1].eventId);check(!screen.queryByRole('alert'));
+});
+
+test('a close that reaches PostgreSQL shortly after the socket is reconciled without reopening media',async()=>{
+ const f=fixture(),baseFetch=globalThis.fetch;let disconnected=false,reads=0;
+ globalThis.fetch=async(input,init)=>{
+  if(disconnected&&String(input)===`/api/v1/classrooms/${snapshot.id}`&&reads++===0)return Response.json({ok:true,classroom:{...snapshot,status:'active',revision:2}});
+  return baseFetch(input,init);
+ };
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
+ await waitFor(()=>assert.equal(f.starts,1));disconnected=true;f.disconnect({...snapshot,status:'ended',revision:3,endReason:'time_limit',endedAt:'2026-11-01T00:10:00Z',elapsedSeconds:600},'error');
+ await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));assert.equal(f.starts,1);assert.equal(reads,2);
 });

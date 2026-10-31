@@ -37,9 +37,9 @@ export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassro
  const [snapshot,setSnapshot]=useState<ClassroomSnapshot|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[attempt,setAttempt]=useState(0),[busy,setBusy]=useState(false);
  const [mic,setMic]=useState<'unchecked'|'checking'|'passed'|'failed'>('unchecked'),[micLevel,setMicLevel]=useState(0),[voiceState,setVoiceState]=useState<'idle'|'connecting'|'connected'|'closed'|'error'>('idle');
  const [levels,setLevels]=useState({child:0,teacher:0}),[tool,setTool]=useState<'pointer'|'pen'>('pointer'),[marks,setMarks]=useState<Mark[]>([]),[draft,setDraft]=useState<Draft|null>(null),[endDialog,setEndDialog]=useState(false),[reward,setReward]=useState(false),[sound,setSound]=useState(true),[notice,setNotice]=useState('');
- const mounted=useRef(false),current=useRef<ClassroomSnapshot|null>(null),ended=useRef(false),locked=useRef(false),voice=useRef<ClassroomVoiceHandle|null>(null),voiceEpoch=useRef(0),micController=useRef<AbortController|null>(null),draftRef=useRef<Draft|null>(null),seenFeedback=useRef(new Set<string>()),rewardTimer=useRef<ReturnType<typeof setTimeout>|null>(null),continueButton=useRef<HTMLButtonElement>(null),soundEnabled=useRef(true),sounds=useRef(new PrototypeSounds());
+ const mounted=useRef(false),current=useRef<ClassroomSnapshot|null>(null),ended=useRef(false),locked=useRef(false),voice=useRef<ClassroomVoiceHandle|null>(null),voiceEpoch=useRef(0),disconnectRead=useRef<{epoch:number;controller:AbortController}|null>(null),micController=useRef<AbortController|null>(null),draftRef=useRef<Draft|null>(null),seenFeedback=useRef(new Set<string>()),rewardTimer=useRef<ReturnType<typeof setTimeout>|null>(null),continueButton=useRef<HTMLButtonElement>(null),soundEnabled=useRef(true),sounds=useRef(new PrototypeSounds());
  const stopMedia=useCallback(async()=>{
-  voiceEpoch.current++;const previous=voice.current;voice.current=null;setLevels({child:0,teacher:0});setVoiceState('closed');sounds.current?.stop();setReward(false);
+  voiceEpoch.current++;disconnectRead.current?.controller.abort();disconnectRead.current=null;const previous=voice.current;voice.current=null;setLevels({child:0,teacher:0});setVoiceState('closed');sounds.current?.stop();setReward(false);
   if(previous){try{await previous.stop();}finally{previous.dispose();}}
  },[]);
  const accept=useCallback((value:ClassroomSnapshot,initial=false)=>{
@@ -61,7 +61,7 @@ export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassro
  useEffect(()=>{
   mounted.current=true;const controller=new AbortController();
   readClassroom(classroomId,controller.signal).then(result=>{if(controller.signal.aborted)return;accept(result.classroom,true);setLoading(false);}).catch(failure=>{if(controller.signal.aborted)return;if(failure instanceof AccountRequestError&&failure.status===401){navigate('/login');return;}setError(errorMessage(failure));setLoading(false);});
-  return()=>{mounted.current=false;controller.abort();micController.current?.abort();voiceEpoch.current++;voice.current?.dispose();voice.current=null;if(rewardTimer.current)clearTimeout(rewardTimer.current);sounds.current?.stop();};
+  return()=>{mounted.current=false;controller.abort();micController.current?.abort();disconnectRead.current?.controller.abort();voiceEpoch.current++;voice.current?.dispose();voice.current=null;if(rewardTimer.current)clearTimeout(rewardTimer.current);sounds.current?.stop();};
  },[classroomId,attempt,accept,navigate]);
  useEffect(()=>()=>{sounds.current?.dispose();},[]);
  useEffect(()=>{if(snapshot?.status==='paused'&&voice.current)void stopMedia();},[snapshot?.status,stopMedia]);
@@ -70,24 +70,50 @@ export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassro
   const leave=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue='';};window.addEventListener('beforeunload',leave);return()=>window.removeEventListener('beforeunload',leave);
  },[snapshot?.status]);
  useEffect(()=>{if(endDialog)continueButton.current?.focus();},[endDialog]);
- async function reload(){const result=await readClassroom(classroomId);accept(result.classroom);}
+ async function reload(){const result=await readClassroom(classroomId);accept(result.classroom);return result.classroom;}
+ function syncDisconnected(epoch:number){
+  if(disconnectRead.current?.epoch===epoch)return;
+  disconnectRead.current?.controller.abort();const controller=new AbortController();disconnectRead.current={epoch,controller};
+  const valid=()=>mounted.current&&!ended.current&&voiceEpoch.current===epoch&&!controller.signal.aborted;
+  void(async()=>{
+   for(const delay of [0,200,500,1000]){
+    if(delay)await new Promise<void>(resolve=>{const finish=()=>{clearTimeout(timer);controller.signal.removeEventListener('abort',finish);resolve();};const timer=setTimeout(finish,delay);controller.signal.addEventListener('abort',finish,{once:true});});
+    if(!valid())return;
+    try{
+     const result=await readClassroom(classroomId,AbortSignal.any([controller.signal,AbortSignal.timeout(2500)]));
+     if(!valid())return;accept(result.classroom);
+     if(result.classroom.status!=='active')return;
+    }catch(failure){if(!valid())return;if(failure instanceof AccountRequestError&&failure.status===401){navigate('/login');return;}}
+   }
+  })();
+ }
  async function action(type:ClassroomAction['type'],objectIds?:string[]){
   const state=current.current;if(!state||ended.current||locked.current)return null;locked.current=true;setBusy(true);setError('');setNotice('');
+  const eventId=crypto.randomUUID(),closing=type==='pause'||type==='end';let target=state;
+  const refreshed=async()=>{target=await reload();return target.status==='ended'||(type==='pause'&&target.status==='paused');};
   try{
-   if(type==='pause'||type==='end')await stopMedia();
-   const result=await accountRequest(`/classrooms/${classroomId}/actions`,classroomResponse,{body:{eventId:crypto.randomUUID(),expectedRevision:state.revision,type,...(objectIds?{objectIds}:{})}});
-   accept(result.classroom);return result.classroom;
+   if(closing){await stopMedia();if(await refreshed())return target;}
+   for(let retry=0;retry<2;retry++){
+    try{
+     const result=await accountRequest(`/classrooms/${classroomId}/actions`,classroomResponse,{body:{eventId,expectedRevision:target.revision,type,...(objectIds?{objectIds}:{})}});
+     accept(result.classroom);return result.classroom;
+    }catch(failure){
+     if(!closing||retry>0||!(failure instanceof AccountRequestError)||failure.status!==409)throw failure;
+     if(await refreshed())return target;
+    }
+   }
+   return null;
   }catch(failure){if(mounted.current){setError(errorMessage(failure));try{await reload();}catch{ /* Keep the last confirmed state visible. */ }}return null;}
   finally{locked.current=false;if(mounted.current)setBusy(false);}
  }
  function connect(){
   const state=current.current;if(!state||ended.current||voice.current||locked.current||mic!=='passed')return;
-  setError('');setNotice('');const epoch=++voiceEpoch.current;
+  setError('');setNotice('');disconnectRead.current?.controller.abort();disconnectRead.current=null;const epoch=++voiceEpoch.current;
   try{
    if(soundEnabled.current)void sounds.current?.play('hint');
-   const client=voiceFactory({classroomId,provider:state.preferences.provider,onState:value=>{if(mounted.current&&epoch===voiceEpoch.current&&!ended.current){setVoiceState(value);if(value==='closed'||value==='error'){voice.current?.dispose();voice.current=null;}}},onSnapshot:value=>{if(epoch===voiceEpoch.current)accept(value);},onLevel:(role,level)=>{if(mounted.current&&epoch===voiceEpoch.current&&!ended.current)setLevels(previous=>({...previous,[role]:level}));},onError:message=>{if(mounted.current&&epoch===voiceEpoch.current&&!ended.current)setError(message);}});
+   const client=voiceFactory({classroomId,provider:state.preferences.provider,onState:value=>{if(mounted.current&&epoch===voiceEpoch.current&&!ended.current){setVoiceState(value);if(value==='closed'||value==='error'){voice.current?.dispose();voice.current=null;syncDisconnected(epoch);}}},onSnapshot:value=>{if(epoch===voiceEpoch.current)accept(value);},onLevel:(role,level)=>{if(mounted.current&&epoch===voiceEpoch.current&&!ended.current)setLevels(previous=>({...previous,[role]:level}));},onError:message=>{if(mounted.current&&epoch===voiceEpoch.current&&!ended.current)setError(message);}});
    voice.current=client;setVoiceState('connecting');
-   void client.start().catch(failure=>{if(mounted.current&&epoch===voiceEpoch.current&&!ended.current){setError(errorMessage(failure));setVoiceState('error');client.dispose();voice.current=null;}});
+   void client.start().catch(failure=>{if(mounted.current&&epoch===voiceEpoch.current&&!ended.current){setError(errorMessage(failure));setVoiceState('error');client.dispose();voice.current=null;syncDisconnected(epoch);}});
   }catch(failure){setError(errorMessage(failure));setVoiceState('error');voice.current?.dispose();voice.current=null;}
  }
  async function check(){
@@ -137,7 +163,7 @@ export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassro
   </aside></div>
   {error&&!preflight&&!endDialog&&<div className="tk-real-error" role="alert">{error}{voiceState==='error'||voiceState==='closed'?<button type="button" disabled={busy} onClick={()=>{void action('resume').then(result=>{if(result)setVoiceState('idle');});}}>准备重新连接</button>:null}</div>}
   <footer className="tk-real-controls" aria-hidden={blocked||undefined} inert={blocked}><div className="tk-real-tools"><button type="button" aria-label="指针" aria-pressed={tool==='pointer'} disabled={!live} onClick={()=>setTool('pointer')}><MousePointer2 size={20}/></button><button type="button" aria-label="画笔" aria-pressed={tool==='pen'} disabled={!live} onClick={()=>setTool('pen')}><Pencil size={20}/></button><button type="button" aria-label="撤销笔迹" disabled={!live||!marks.length} onClick={()=>setMarks(value=>value.slice(0,-1))}><Undo2 size={20}/></button></div><div className="tk-real-main-controls"><button type="button" aria-label={sound?'关闭互动音效':'开启互动音效'} aria-pressed={sound} onClick={()=>{const next=!sound;setSound(next);soundEnabled.current=next;if(!next)sounds.current?.stop();}}>{sound?<Volume2 size={20}/>:<VolumeX size={20}/>}</button><button type="button" aria-label="暂停课堂" disabled={busy||voiceState!=='connected'} onClick={()=>{void action('pause');}}><Pause size={18}/>暂停</button><button type="button" className="tk-real-end" aria-label="结束课堂" disabled={busy} onClick={()=>setEndDialog(true)}><PhoneOff size={18}/>结束</button></div></footer>
-  {preflight&&voiceState!=='connecting'&&!endDialog&&<div className="tk-real-scrim"><section className="tk-real-preflight" aria-label="准备上课"><div className="tk-real-preflight-art"><span>{Array.from(state.profile.name.trim())[0]?.toUpperCase()||'T'}</span><strong>{state.profile.name}</strong><small><CameraOff size={14}/>摄像头未开启</small></div><div><h1>准备上课</h1><p>需要麦克风，摄像头可以不开。</p><button className="tk-real-check" type="button" disabled={mic==='checking'} onClick={()=>{void check();}}>{mic==='passed'?<Check size={20}/>:<Mic size={20}/>}<span>{mic==='checking'?'请说一句 Hello…':mic==='passed'?'麦克风检查通过':'检查麦克风'}</span>{mic==='checking'&&<meter min={0} max={1} value={micLevel} aria-label="麦克风音量"/>}</button>{error&&<p className="tk-account-error" role="alert">{error}</p>}{(voiceState==='error'||voiceState==='closed')&&<button type="button" className="tk-real-check" disabled={busy} onClick={()=>{void action('resume').then(result=>{if(result)setVoiceState('idle');});}}>准备重新连接<RotateCcw size={16}/></button>}<button type="button" className="tk-submit" disabled={mic!=='passed'||busy||voiceState==='connecting'||voiceState==='error'||voiceState==='closed'} onClick={connect}>{voiceState==='connecting'?'正在连接老师…':'开始上课'}<ArrowRight size={18}/></button><Link className="tk-real-back" href="/courses">回到我的课程</Link></div></section></div>}
+  {preflight&&voiceState!=='connecting'&&!endDialog&&<div className="tk-real-scrim"><section className="tk-real-preflight" aria-label="准备上课"><div className="tk-real-preflight-art"><span>{Array.from(state.profile.name.trim())[0]?.toUpperCase()||'T'}</span><strong>{state.profile.name}</strong><small><CameraOff size={14}/>摄像头未开启</small></div><div><h1>准备上课</h1><p>需要麦克风，摄像头可以不开。</p><button className="tk-real-check" type="button" disabled={mic==='checking'} onClick={()=>{void check();}}>{mic==='passed'?<Check size={20}/>:<Mic size={20}/>}<span>{mic==='checking'?'请说一句 Hello…':mic==='passed'?'麦克风检查通过':'检查麦克风'}</span>{mic==='checking'&&<meter min={0} max={1} value={micLevel} aria-label="麦克风音量"/>}</button>{error&&<p className="tk-account-error" role="alert">{error}</p>}{(voiceState==='error'||voiceState==='closed')&&<button type="button" className="tk-real-check" disabled={busy} onClick={()=>{void action('resume').then(result=>{if(result)setVoiceState('idle');});}}>准备重新连接<RotateCcw size={16}/></button>}<button type="button" className="tk-submit" disabled={mic!=='passed'||busy||voiceState==='error'||voiceState==='closed'} onClick={connect}>开始上课<ArrowRight size={18}/></button><Link className="tk-real-back" href="/courses">回到我的课程</Link></div></section></div>}
   {voiceState==='connecting'&&!endDialog&&<div className="tk-real-connecting"><span role="status">正在连接老师…</span><button type="button" onClick={()=>{void stopMedia().then(reload).catch(failure=>setError(errorMessage(failure)));}}>取消连接</button></div>}
   {state.status==='paused'&&!endDialog&&<div className="tk-real-scrim"><section className="tk-real-pause" role="dialog" aria-modal="true" aria-label="课堂已暂停"><Pause size={24}/><h2>已暂停</h2><div><button type="button" className="tk-submit" disabled={busy} onClick={()=>{void action('resume').then(result=>{if(result){setVoiceState('idle');}});}}><Play size={18}/>继续上课</button><button type="button" disabled={busy} onClick={()=>setEndDialog(true)}>结束课堂</button></div></section></div>}
   {endDialog&&<div className="tk-real-scrim"><section className="tk-real-pause" role="dialog" aria-modal="true" aria-label="结束确认" onKeyDown={event=>{if(event.key==='Escape'&&!busy){event.preventDefault();setEndDialog(false);}if(event.key==='Tab'){const buttons=event.currentTarget.querySelectorAll<HTMLButtonElement>('button');const first=buttons[0],last=buttons[buttons.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}}}><h2>今天就学到这里？</h2><p>结束后保留本次进度。</p><div><button type="button" className="tk-submit" ref={continueButton} disabled={busy} onClick={()=>setEndDialog(false)}>继续上课</button><button type="button" className="tk-real-danger" disabled={busy} onClick={()=>{void action('end');}}>结束并保存</button></div></section></div>}
