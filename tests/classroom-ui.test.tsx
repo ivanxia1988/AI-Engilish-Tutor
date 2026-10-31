@@ -1,6 +1,8 @@
 import React from "react";
 import test, { beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import nodeAssert from "node:assert/strict";
+// An explicit message avoids Node 24 parsing tsx-generated source during transient waitFor failures.
+const assert: typeof nodeAssert = Object.assign((value: unknown, message?: string | Error): asserts value => nodeAssert.ok(value, message ?? "Expected a truthy value."), nodeAssert);
 import { JSDOM } from "jsdom";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost:5173" });
