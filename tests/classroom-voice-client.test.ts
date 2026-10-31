@@ -5,7 +5,7 @@ import type { ClassroomSnapshot } from '../lib/classroom-contract';
 import type { PcmVoiceAudioOptions } from '../lib/voice-audio';
 
 function harness() {
-  const sent: Record<string, unknown>[] = [], states: string[] = [], snapshots: ClassroomSnapshot[] = [], errors: string[] = [], order: string[] = [];
+  const sent: Record<string, unknown>[] = [], states: string[] = [], snapshots: ClassroomSnapshot[] = [], errors: string[] = [], failures: unknown[] = [], queues: number[] = [], order: string[] = [];
   let tracksStopped = 0, audioClosed = 0, captures = 0, playback = 0, interrupted = 0, audioOptions: PcmVoiceAudioOptions | undefined;
   const track = { enabled: true, stop() { tracksStopped++; } };
   const stream = { getTracks: () => [track] } as unknown as MediaStream;
@@ -24,8 +24,8 @@ function harness() {
     audio: options => { audioOptions = options; order.push('audio-gesture'); return { startCapture: async () => { captures++; }, playChunk: () => { playback++; }, cancelPlayback: () => { interrupted++; }, mute() {}, resume: async () => {}, close: () => { audioClosed++; } }; },
     startupMs: 200, closeMs: 10,
   };
-  const client = new ClassroomVoiceClient({ classroomId: 'classroom-1', provider: 'qwen', onState: state => states.push(state), onSnapshot: snapshot => snapshots.push(snapshot), onLevel() {}, onError: error => errors.push(error) }, dependencies);
-  return { client, socket, sent, states, snapshots, errors, order, track, dependencies, setMicrophone: (media: () => Promise<MediaStream>) => { microphone = media; }, get options() { return audioOptions!; }, get tracksStopped() { return tracksStopped; }, get audioClosed() { return audioClosed; }, get captures() { return captures; }, get playback() { return playback; }, get interrupted() { return interrupted; }, stream };
+  const client = new ClassroomVoiceClient({ classroomId: 'classroom-1', provider: 'qwen', onState: state => states.push(state), onSnapshot: snapshot => snapshots.push(snapshot), onLevel() {}, onError: error => errors.push(error), onFailure: failure => failures.push(failure), onPlaybackQueue: ms => queues.push(ms) }, dependencies);
+  return { client, socket, sent, states, snapshots, errors, failures, queues, order, track, dependencies, setMicrophone: (media: () => Promise<MediaStream>) => { microphone = media; }, get options() { return audioOptions!; }, get tracksStopped() { return tracksStopped; }, get audioClosed() { return audioClosed; }, get captures() { return captures; }, get playback() { return playback; }, get interrupted() { return interrupted; }, stream };
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
@@ -67,4 +67,20 @@ test('same-class server snapshots apply; late events after stop cannot restart p
   h.client.setMuted(true); assert.equal(h.track.enabled, false);
   await h.client.stop(); h.socket.emit({ type: 'audio', audio: 'AAAA', sampleRate: 24000 }); assert.equal(h.playback, 0);
   assert.equal(h.client.sendText('late'), false);
+});
+
+test('server failure codes reach the UI safely and cannot expose arbitrary upstream text', async () => {
+  const h = harness(), starting = h.client.start(); await tick(); h.socket.emit({ type: 'ready', inputSampleRate: 16000, outputSampleRate: 24000 }); await starting;
+  h.socket.emit({ type: 'error', code: 'response_timeout', message: 'PRIVATE_UPSTREAM_DETAIL' });
+  assert.equal(h.states.at(-1), 'error'); assert.equal((h.failures[0] as { code: string }).code, 'response_timeout');
+  assert(!JSON.stringify(h.failures).includes('PRIVATE_UPSTREAM_DETAIL')); assert(!JSON.stringify(h.errors).includes('PRIVATE_UPSTREAM_DETAIL'));
+  assert.equal(h.audioClosed, 1); assert.equal(h.tracksStopped, 1);
+});
+
+test('actual playback queue is forwarded and is reset on release without claiming a network packet was speech', async () => {
+  const h = harness(), starting = h.client.start(); await tick(); h.socket.emit({ type: 'ready', inputSampleRate: 16000, outputSampleRate: 24000 }); await starting;
+  h.socket.emit({ type: 'audio', audio: 'AAAA', sampleRate: 24000 }); assert.deepEqual(h.queues, []);
+  h.options.onQueue?.(230); assert.equal(h.queues.at(-1), 230);
+  await h.client.stop(); assert.equal(h.queues.at(-1), 0);
+  h.options.onQueue?.(500); assert.equal(h.queues.at(-1), 0);
 });

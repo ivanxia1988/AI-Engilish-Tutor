@@ -1,5 +1,6 @@
 import type { ClassroomSnapshot } from './classroom-contract';
 import { PcmVoiceAudio, type PcmVoiceAudioOptions } from './voice-audio';
+import { classroomVoiceFailure, type ClassroomVoiceErrorCode, type ClassroomVoiceFailure } from './classroom-voice-errors';
 
 type VoiceState = 'connecting' | 'connected' | 'closed' | 'error';
 type AudioOwner = Pick<PcmVoiceAudio, 'startCapture' | 'playChunk' | 'cancelPlayback' | 'mute' | 'resume' | 'close'>;
@@ -9,6 +10,8 @@ export type ClassroomVoiceClientOptions = {
   onSnapshot(snapshot: ClassroomSnapshot): void;
   onLevel(role: 'child' | 'teacher', level: number): void;
   onError(message: string): void;
+  onFailure?(failure: ClassroomVoiceFailure): void;
+  onPlaybackQueue?(milliseconds: number): void;
 };
 export type ClassroomVoiceClientDependencies = {
   media(): Promise<MediaStream>;
@@ -50,9 +53,10 @@ export class ClassroomVoiceClient {
     try {
       // Build WebAudio before awaiting microphone permission, while the click still authorizes playback.
       this.audio = this.dependencies.audio({ inputSampleRate: this.options.provider === 'qwen' ? 16000 : 24000, frameMs: 100,
-        onFrame: audio => { if (this.ready && !this.stopped && !this.muted && !this.send({ type: 'audio', audio })) this.fail('声音发送积压，连接已停止，请重新连接。'); },
+        onFrame: audio => { if (this.ready && !this.stopped && !this.muted && !this.send({ type: 'audio', audio })) this.fail('声音发送积压，连接已停止，请重新连接。', 'input_rate_limited'); },
         onLevel: (role, level) => { if (!this.stopped) this.options.onLevel(role, level); },
-        onIssue: message => this.fail(message),
+        onQueue: milliseconds => { if (!this.stopped) this.options.onPlaybackQueue?.(milliseconds); },
+        onIssue: (message, code) => this.fail(message, code ?? 'audio_capture_failed'),
       });
       const stream = await this.dependencies.media();
       if (this.stopped) { stream.getTracks().forEach(track => track.stop()); return; }
@@ -61,7 +65,7 @@ export class ClassroomVoiceClient {
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       this.socket = this.dependencies.socket(url.href);
       const completion = new Promise<void>((resolve, reject) => { this.startResolve = resolve; this.startReject = reject; });
-      this.startup = setTimeout(() => this.fail('语音连接超时，请重试。'), this.dependencies.startupMs);
+      this.startup = setTimeout(() => this.fail('语音连接超时，请重试。', 'startup_timeout'), this.dependencies.startupMs);
       this.socket.onmessage = event => { void this.receive(event.data); };
       this.socket.onerror = () => this.fail('语音连接未成功，请检查网络后重试。');
       this.socket.onclose = () => {
@@ -70,7 +74,7 @@ export class ClassroomVoiceClient {
       };
       await completion;
     } catch (error) {
-      if (!this.stopped) this.fail(error instanceof Error && error.message.includes('当前浏览器') ? error.message : '无法打开麦克风或连接语音服务，请检查权限后重试。');
+      if (!this.stopped) this.fail(error instanceof Error && error.message.includes('当前浏览器') ? error.message : '无法打开麦克风或连接语音服务，请检查权限后重试。', 'microphone_denied');
       throw error;
     }
   }
@@ -84,7 +88,7 @@ export class ClassroomVoiceClient {
     try { event = JSON.parse(raw) as Record<string, unknown>; if (!event || typeof event !== 'object') return; } catch { this.fail('语音服务响应异常，请重新连接。'); return; }
     if (event.type === 'ready') {
       if (this.ready) return;
-      if (event.inputSampleRate !== (this.options.provider === 'qwen' ? 16000 : 24000) || event.outputSampleRate !== 24000) { this.fail('语音采样配置不一致，请重新连接。'); return; }
+      if (event.inputSampleRate !== (this.options.provider === 'qwen' ? 16000 : 24000) || event.outputSampleRate !== 24000) { this.fail('语音采样配置不一致，请重新连接。', 'invalid_audio'); return; }
       this.ready = true;
       try {
         await this.audio?.startCapture(this.stream!);
@@ -92,13 +96,13 @@ export class ClassroomVoiceClient {
         this.audio?.mute(this.muted);
         if (this.startup) clearTimeout(this.startup); this.startup = null;
         this.options.onState('connected'); this.startResolve?.(); this.startResolve = null; this.startReject = null;
-      } catch { if (!this.stopped) this.fail('无法启动麦克风采集，请重新连接。'); }
+      } catch { if (!this.stopped) this.fail('无法启动麦克风采集，请重新连接。', 'audio_capture_failed'); }
     } else if (event.type === 'audio' && this.ready && typeof event.audio === 'string' && event.sampleRate === 24000) this.audio?.playChunk(event.audio, 24000);
     else if (event.type === 'interrupt') this.audio?.cancelPlayback();
     else if (event.type === 'snapshot') {
       const value = event.classroom;
       if (value && typeof value === 'object' && 'id' in value && value.id === this.options.classroomId && 'revision' in value && Number.isInteger(value.revision)) this.options.onSnapshot(value as ClassroomSnapshot);
-    } else if (event.type === 'error') this.fail(typeof event.message === 'string' && event.message.length <= 200 ? event.message : '语音连接暂时不可用，请重试。');
+    } else if (event.type === 'error') { const failure = classroomVoiceFailure(event.code); this.fail(failure.message, failure.code); }
     else if (event.type === 'closed') {
       this.stopped = true; this.releaseLocal(); this.startResolve?.(); this.startResolve = null; this.startReject = null; this.closeResolve?.();
       this.socket?.close(); this.options.onState('closed');
@@ -110,12 +114,14 @@ export class ClassroomVoiceClient {
     this.stream?.getTracks().forEach(track => track.stop()); this.stream = null;
     this.audio?.close(); this.audio = null;
     this.options.onLevel('child', 0); this.options.onLevel('teacher', 0);
+    this.options.onPlaybackQueue?.(0);
   }
-  private fail(message: string) {
+  private fail(message: string, code: ClassroomVoiceErrorCode = 'transport_error') {
     if (this.stopped) return;
     this.stopped = true; this.releaseLocal();
     this.startReject?.(new Error(message)); this.startReject = null; this.startResolve = null;
-    this.send({ type: 'close' }); this.socket?.close(); this.options.onState('error'); this.options.onError(message);
+    this.options.onFailure?.({ code, message });
+    this.send({ type: 'close' }); this.socket?.close(); this.options.onError(message); this.options.onState('error');
   }
   sendText(text: string): boolean {
     return this.ready && !this.stopped && text.trim().length > 0 && text.length <= 1000 && this.send({ type: 'text', text: text.trim() });

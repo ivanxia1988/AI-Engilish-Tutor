@@ -1,3 +1,4 @@
+import { classroomVoiceFailure, type ClassroomVoiceErrorCode } from '../classroom-voice-errors';
 import { createHash, randomUUID } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -143,14 +144,14 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       if (upstream?.readyState === WebSocket.OPEN) upstream.close();
       if (upstream?.readyState === WebSocket.CONNECTING) upstream.terminate();
     };
-    const stop = (message?: string) => {
+    const stop = (code?: ClassroomVoiceErrorCode) => {
       if (closePromise) return closePromise;
       unsubscribeRefresh();
       stopped = true; timers.forEach(timer => clearTimeout(timer)); timers.clear(); clearInterval(heartbeatTimer); clearInterval(pingTimer);
       outputPacer.close();
       clearGptOutputGate();
       resetUtterance();
-      if (message) toClient({ type: 'error', message });
+      if (code) toClient({ type: 'error', ...classroomVoiceFailure(code) });
       toClient({ type: 'interrupt' });
       closePromise = (async () => {
         if (lease.provider === 'openai' && ready && upstream?.readyState === WebSocket.OPEN && !finalized) {
@@ -167,8 +168,8 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       })();
       return closePromise;
     };
-    const fail = () => { void stop('实时语音连接未完成，请检查网络或重新连接。'); };
-    const outputPacer = new PcmOutputPacer({ send: audio => toClient({ type: 'audio', audio, sampleRate: 24000 }), error: message => { void stop(message); } }, options.audioClock);
+    const fail = (code: ClassroomVoiceErrorCode = 'transport_error') => { void stop(code); };
+    const outputPacer = new PcmOutputPacer({ send: audio => toClient({ type: 'audio', audio, sampleRate: 24000 }), error: () => { fail('output_audio_failed'); } }, options.audioClock);
     const clearPlayback = () => { outputPacer.clear(); toClient({ type: 'interrupt' }); };
     function clearGptOutputGate() {
       if (!gptOutputGate) return;
@@ -184,7 +185,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     function gateGptOutput() {
       if (protocol) return;
       clearPlayback();
-      if (!gptOutputGate) gptOutputGate = { acknowledged: false, quietMs: 0, lastOutputAt: Date.now(), deadline: setTimeout(() => { void stop('老师的声音暂时无法重新同步，请重新连接课堂。'); }, options.gptOutputWaitMs ?? 30000) };
+      if (!gptOutputGate) gptOutputGate = { acknowledged: false, quietMs: 0, lastOutputAt: Date.now(), deadline: setTimeout(() => { void stop('audio_sync_timeout'); }, options.gptOutputWaitMs ?? 30000) };
       else { gptOutputGate.acknowledged = false; gptOutputGate.quietMs = 0; gptOutputGate.lastOutputAt = Date.now(); }
     }
     function bindGptOutputAck(id: string | false) {
@@ -193,7 +194,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const clearQwenTimer = (timer: ReturnType<typeof setTimeout> | undefined) => { if (timer) { clearTimeout(timer); timers.delete(timer); } };
     const awaitQwenResponse = () => {
       clearQwenTimer(qwenResponseTimer);
-      qwenResponseTimer = setTimeout(fail, options.responseAckMs ?? 15000); timers.add(qwenResponseTimer);
+      qwenResponseTimer = setTimeout(() => fail('response_timeout'), options.responseAckMs ?? 15000); timers.add(qwenResponseTimer);
     };
     const sendQwenRaw = (raw: string) => {
       if (stopped) return;
@@ -227,7 +228,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         if (type === 'response.cancel') { cancelQwenResponse(); continue; }
         if (type === 'session.update') {
           qwenAwaiting = true; clearQwenTimer(qwenAckTimer);
-          qwenAckTimer = setTimeout(fail, options.responseAckMs ?? 15000); timers.add(qwenAckTimer);
+          qwenAckTimer = setTimeout(() => fail('configuration_timeout'), options.responseAckMs ?? 15000); timers.add(qwenAckTimer);
           for (const rest of commands.slice(index + 1).reverse()) if (typeof rest === 'string') qwenQueue.unshift({ raw: rest, cue: item.cue, interrupts: item.interrupts });
           sendQwenRaw(raw); return;
         }
@@ -278,7 +279,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         const result = await timed(lease.tool(name, args), 10000);
         if (stopped) return;
         const active = await timed(lease.heartbeat(), 5000);
-        if (!active) { void stop(); return; }
+        if (!active) { void stop('lease_lost'); return; }
         if (stopped) return;
         context(active.snapshot, active.instructions, false);
         const output = active.snapshot.revision > result.snapshot.revision
@@ -302,7 +303,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       if (!bounded(text, 6000)) return;
       history.push({ role, text }); if (history.length > 16) history.shift();
       if (!final) return;
-      transcriptChain = transcriptChain.then(() => stopped || contextKey !== currentKey() ? undefined : lease.transcript({ role, text, final, contextKey, source, ...(itemId ? { itemId } : {}) })).catch(fail);
+      transcriptChain = transcriptChain.then(() => stopped || contextKey !== currentKey() ? undefined : lease.transcript({ role, text, final, contextKey, source, ...(itemId ? { itemId } : {}) })).catch(() => fail('lease_check_failed'));
     };
     function resetUtterance() {
       if (utteranceTimer) clearTimeout(utteranceTimer); utteranceTimer = undefined;
@@ -378,15 +379,15 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         if (stopped) return;
         if (configure && protocol) enqueueQwen({ type: 'configure', instructions: lease.instructions, tools: CLASSROOM_VOICE_TOOLS });
         else becomeReady();
-      } catch { fail(); }
+      } catch { fail('session_persist_failed'); }
     };
     const handleUpstream = (data: WebSocket.RawData, binary: boolean) => {
       const length = Array.isArray(data) ? data.reduce((sum, chunk) => sum + chunk.length, 0) : data.byteLength;
       if (binary || length > 512_000) { fail(); return; }
       const event = json(data); if (!event) { fail(); return; }
-      if (event.type === 'session.closed') { finish(); void stop(); return; }
+      if (event.type === 'session.closed') { finish(); void stop(stopped ? undefined : 'upstream_closed'); return; }
       if (stopped) return;
-      if (event.type === 'error') { fail(); return; }
+      if (event.type === 'error') { fail('provider_error'); return; }
       if (protocol) {
         for (const value of protocol.parse(event)) {
           if (value.type === 'session_created') void providerStarted(value.sessionId, true);
@@ -422,7 +423,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
           else if (value.type === 'tool' && tools.has(value.name)) {
             try { const args: unknown = JSON.parse(value.arguments); void transcriptChain.then(() => tool(value.callId, value.name, args)); } catch { fail(); }
           }
-          else if (value.type === 'error') fail();
+          else if (value.type === 'error') fail('provider_error');
         }
       } else {
         if (event.type === 'session.started') void providerStarted((event.session as { id?: unknown } | undefined)?.id, false);
@@ -484,9 +485,9 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
             refreshQueued = false;
             try {
               const heartbeat = await timed(lease.heartbeat(), 5000);
-              if (!heartbeat) { void stop(); return; }
+              if (!heartbeat) { void stop('lease_lost'); return; }
               if (ready && heartbeat.snapshot.revision !== revision) context(heartbeat.snapshot, heartbeat.instructions, true);
-            } catch { void stop('课堂连接已停止，请重新连接。'); return; }
+            } catch { void stop('lease_check_failed'); return; }
           }
         } finally { refreshPromise = undefined; }
       })();
@@ -494,23 +495,25 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     };
     const heartbeatTimer = setInterval(() => { void refreshConnection(); }, options.heartbeatMs ?? 2000);
     unsubscribeRefresh = subscribeClassroomRefresh(lease.id, refreshConnection);
-    const startup = setTimeout(() => { void stop('语音服务连接超时，请重试。'); }, options.startupMs ?? 20000);
+    const startup = setTimeout(() => { void stop('startup_timeout'); }, options.startupMs ?? 20000);
     timers.add(startup);
-    const deadline = setTimeout(() => { void stop('本次课堂已到时间，请查看课堂小结。'); }, Math.min(lease.remainingMs, 2_147_483_647)); timers.add(deadline);
+    const deadline = setTimeout(() => { void stop('deadline_reached'); }, Math.min(lease.remainingMs, 2_147_483_647)); timers.add(deadline);
     connections.add(stop);
     client.on('close', () => { void stop(); }); client.on('error', () => { void stop(); });
     client.on('message', (data, binary) => {
       if (stopped) return;
       if (Date.now() - windowStart >= 1000) { windowStart = Date.now(); messages = 0; frames = 0; }
-      if (++messages > 24 || binary) { fail(); return; }
+      if (++messages > 24) { fail('input_rate_limited'); return; }
+      if (binary) { fail('protocol_error'); return; }
       const event = json(data);
-      if (!event || !['audio', 'text', 'ping', 'close', 'mute'].includes(String(event.type))) { fail(); return; }
+      if (!event || !['audio', 'text', 'ping', 'close', 'mute'].includes(String(event.type))) { fail('protocol_error'); return; }
       if (event.type === 'close') { void stop(); return; }
       if (event.type === 'ping') { toClient({ type: 'pong' }); return; }
       if (!ready) return;
       if (event.type === 'audio') {
         const expected = lease.provider === 'qwen' ? 3200 : 4800;
-        if (++frames > 16 || !bounded(event.audio, Math.ceil(expected / 3) * 4) || !/^[A-Za-z0-9+/]+={0,2}$/.test(event.audio) || Buffer.from(event.audio, 'base64').length !== expected) { fail(); return; }
+        if (++frames > 16) { fail('input_rate_limited'); return; }
+        if (!bounded(event.audio, Math.ceil(expected / 3) * 4) || !/^[A-Za-z0-9+/]+={0,2}$/.test(event.audio) || Buffer.from(event.audio, 'base64').length !== expected) { fail('invalid_audio'); return; }
         observePcm(event.audio);
         if (protocol) enqueueQwen({ type: 'audio', audio: event.audio });
         else if (!send(upstream, { type: 'session.input_audio.append', audio: event.audio })) fail();
@@ -531,8 +534,8 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     try {
       upstream = (options.connect ?? ((url, headers) => new WebSocket(url, { headers, maxPayload: 512_000, handshakeTimeout: 15000, perMessageDeflate: false })))(endpoint, { Authorization: `Bearer ${config.key}`, ...(lease.provider === 'openai' ? { 'OpenAI-Safety-Identifier': createHash('sha256').update(lease.id).digest('hex') } : {}) });
       upstream.on('message', handleUpstream);
-      upstream.on('error', fail);
-      upstream.on('close', () => { finish(); void stop(); });
+      upstream.on('error', () => fail('transport_error'));
+      upstream.on('close', () => { finish(); void stop(stopped ? undefined : 'upstream_closed'); });
       upstream.on('open', () => {
         if (stopped) { upstream?.terminate(); return; }
         if (lease.provider === 'openai') send(upstream, {

@@ -321,7 +321,25 @@ test('Qwen missing response.created acknowledgement times out visibly and releas
     const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.sent.some(event => event.type === 'response.create'));
     await waitFor(() => h.released === 1);
     await waitFor(() => h.downstream.some(event => event.type === 'error') && h.upstream!.readyState !== WebSocket.OPEN);
+    assert.equal(h.downstream.find(event => event.type === 'error')?.code, 'response_timeout');
   } finally { await h.close(); }
+});
+
+test('connection failures carry safe layer codes instead of resembling an intentional close', async () => {
+  for (const cause of ['provider_error', 'input_rate_limited', 'upstream_closed', 'lease_lost'] as const) {
+    const h = await harness('qwen', { heartbeatMs: 20 });
+    try {
+      const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+      if (cause === 'provider_error') h.upstream!.send(JSON.stringify({ type: 'error', error: { message: 'PRIVATE_UPSTREAM_DETAIL' } }));
+      else if (cause === 'input_rate_limited') for (let i = 0; i < 17; i++) socket.send(JSON.stringify({ type: 'audio', audio: Buffer.alloc(3200).toString('base64') }));
+      else if (cause === 'upstream_closed') h.upstream!.terminate();
+      else h.revoke();
+      await once(socket, 'close'); await waitFor(() => h.released === 1);
+      assert.equal(h.downstream.find(event => event.type === 'error')?.code, cause);
+      assert(!JSON.stringify(h.downstream).includes('PRIVATE_UPSTREAM_DETAIL'));
+      assert(!h.downstream.some(event => event.type === 'snapshot' && (event.classroom as ClassroomSnapshot).status === 'paused'));
+    } finally { await h.close(); }
+  }
 });
 
 test('GPT context appends contain only compact facts and every append stays within a conservative UTF8 bound', async () => {

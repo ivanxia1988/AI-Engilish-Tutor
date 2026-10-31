@@ -1,11 +1,12 @@
 /** Browser PCM audio only. Transport and MediaStream track ownership stay outside. */
+import type { ClassroomVoiceErrorCode } from './classroom-voice-errors';
 export type PcmVoiceAudioOptions = {
   inputSampleRate: number;
   frameMs: number;
   onFrame: (audioBase64: string) => void;
   onLevel: (role: 'child' | 'teacher', level: number) => void;
   onQueue?: (milliseconds: number) => void;
-  onIssue?: (message: string) => void;
+  onIssue?: (message: string, code?: ClassroomVoiceErrorCode) => void;
 };
 export type PcmAudioDependencies = {
   context: () => AudioContext;
@@ -79,9 +80,9 @@ export class PcmVoiceAudio {
   private ensureTimer() {
     if (this.timer === null) this.timer = this.dependencies.every(() => this.tick(), 40);
   }
-  private issue(message: string) {
+  private issue(message: string, code: ClassroomVoiceErrorCode = 'audio_capture_failed') {
     if (this.failed || this.closed) return;
-    this.failed = true; this.close(); this.options.onIssue?.(message);
+    this.failed = true; this.close(); this.options.onIssue?.(message, code);
   }
   async startCapture(stream: MediaStream): Promise<void> {
     if (this.closed) throw new Error('语音采集已经结束，请重新连接。');
@@ -99,13 +100,13 @@ export class PcmVoiceAudio {
         if (this.closed || this.muted || event.data?.type !== 'frame' || event.data.epoch !== this.captureEpoch) return;
         const frame = event.data.audio;
         const expectedBytes = this.options.inputSampleRate * this.options.frameMs / 1000 * 2;
-        if (!(frame instanceof ArrayBuffer) || frame.byteLength !== expectedBytes) { this.issue('语音采集返回了异常音频帧，请重新连接。'); return; }
-        if (typeof event.data.at === 'number' && this.context.currentTime - event.data.at > MAX_CAPTURE_BACKLOG_SECONDS) { this.issue('浏览器音频采集积压，已停止发送以免突发上传旧声音，请重新连接。'); return; }
+        if (!(frame instanceof ArrayBuffer) || frame.byteLength !== expectedBytes) { this.issue('语音采集返回了异常音频帧，请重新连接。', 'invalid_audio'); return; }
+        if (typeof event.data.at === 'number' && this.context.currentTime - event.data.at > MAX_CAPTURE_BACKLOG_SECONDS) { this.issue('浏览器音频采集积压，已停止发送以免突发上传旧声音，请重新连接。', 'audio_capture_backlog'); return; }
         this.lastCaptureAt = this.context.currentTime;
         const level = typeof event.data.level === 'number' && Number.isFinite(event.data.level) ? Math.max(0, Math.min(1, event.data.level)) : 0;
         this.options.onLevel('child', level);
         try { this.options.onFrame(pcmBytesToBase64(frame)); }
-        catch { this.issue('实时语音发送失败，请重新连接。'); }
+        catch { this.issue('实时语音发送失败，请重新连接。', 'transport_error'); }
       };
       this.input = this.context.createMediaStreamSource(stream);
       this.sink = this.context.createGain(); this.sink.gain.value = 0;
@@ -124,7 +125,7 @@ export class PcmVoiceAudio {
       const samples = decodePcm16(base64), now = this.context.currentTime;
       const start = Math.max(now + .015, this.nextAt), end = start + samples.length / sampleRate;
       if (end - now > MAX_PLAYBACK_QUEUE_SECONDS || this.playback.size >= MAX_PLAYBACK_SOURCES) {
-        this.issue('老师声音积压超过安全播放范围，已停止本次音频，请重新连接或切换网络。'); return;
+        this.issue('老师声音积压超过安全播放范围，已停止本次音频，请重新连接或切换网络。', 'audio_playback_backlog'); return;
       }
       const buffer = this.context.createBuffer(1, samples.length, sampleRate); buffer.copyToChannel(samples, 0);
       const source = this.context.createBufferSource(); source.buffer = buffer; source.connect(this.context.destination);
@@ -133,7 +134,7 @@ export class PcmVoiceAudio {
       source.onended = () => { this.playback.delete(source); try { source.disconnect(); } catch {} };
       source.start(start);
       this.options.onQueue?.(Math.max(0, end - now) * 1000); this.ensureTimer();
-    } catch { this.issue('老师音频格式异常，已停止播放，请重新连接。'); }
+    } catch { this.issue('老师音频格式异常，已停止播放，请重新连接。', 'invalid_audio'); }
   }
   private tick() {
     if (this.closed) return;
@@ -165,7 +166,7 @@ export class PcmVoiceAudio {
   }
   async resume(): Promise<void> {
     if (this.closed) return;
-    try { await this.context.resume(); } catch { this.issue('浏览器暂停了语音播放，请重新连接后允许播放声音。'); }
+    try { await this.context.resume(); } catch { this.issue('浏览器暂停了语音播放，请重新连接后允许播放声音。', 'audio_playback_failed'); }
   }
   close(): void {
     if (this.closed) return;
