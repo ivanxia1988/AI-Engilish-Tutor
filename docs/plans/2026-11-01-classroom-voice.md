@@ -1,0 +1,46 @@
+# 正式课堂实时连接实现
+
+日期：2026-11-01。关联 TK-R-004/006/007/009/011/012/013/019/023，TK-AC-004/005/007/008/011/012/015/017/019/026/035。用户已要求把正式账号后的课程接到真实课堂，本切片由独立 worktree `codex/teeko-classroom-voice` 实施。
+
+## 通路和职责
+
+浏览器只连接同源 `/api/v1/classrooms/{id}/stream`，传100ms、PCM16LE单声道音频帧；输入通义16kHz、GPT Live 24kHz，输出均24kHz。Node持有长期供应商密钥及上游主WebSocket，浏览器不获得密钥、供应商会话ID、任意供应商事件透传或公开发码能力。
+
+本地试上课先复用两家现有模型配置，采用受控PCM中转便于统一终止和PG租约验证；这与原候选GPT WebRTC+sideband通路不同。官方仍推荐WebRTC用于低延迟音频，不能把本切片的主WS实现描述为已验证等价弱网性能。未来可在相同业务租约上单独比较WebRTC，不在本次同时保留两套计费连接。
+
+Node升级前校验准确Origin、单一账号Cookie和UUID路径，再由根模块 `openClassroomVoice` 验证PG账号/档案/课堂/租约。每2秒心跳，失去身份/租约、暂停、结束、硬截止、客户端失联、上下游积压或启动超时均关上游并释放租约。供应商会话ID由可选 `lease.started(id)` 持久化成功后才允许ready；失败不开放麦克风音频发送。关闭GPT先发session.close并有界等待session.closed，再释放TCP；未等到最终事件不能声称供应商最终用量已确认。
+
+根模块负责PG状态、额度、口语证据和工具真实性。Socket适配不信任客户端correct、上下文、模型或课程参数，只允许audio/text/ping/close/mute；物理连接设帧尺寸、QPS、payload和背压边界。当前配置不启用多副本owner路由。
+
+## 两家协议
+
+- GPT Live：主WS地址固定，session.start后等待session.started；session.input_audio.append发送PCM，session.output_audio.delta返回PCM；动态上下文使用thinking.append，发声提示用commentary.append。client delegation到达后立即空thinking取消自动确认，服务端工具确认后回同一delegation ID，不把转写片段当最终答案。
+- 通义：复用createQwenProtocol，先session.created→session.update→session.updated；配置完成才ready和发音频。context更新后等待session.updated再response.create；工具走原生function_call_output。HTTP点选/提示导致的revision变化会更新上下文并生成一条自然提示，未变化心跳不重复发声。
+- 课堂工具在服务端串行接收已落库转写后调用；工具等待过程中若结束/失租约，不回传迟到确认、不重新发声。更高revision覆盖旧结果，不能重复执行旧动作。
+- 不把通义儿童数据偷偷转给OpenAI。GPT委派执行根模块的已验证应用逻辑，不在本切片新增第二路隐藏推理请求。
+
+协议核对来源：
+
+- [GPT Live主WebSocket](https://developers.openai.com/api/docs/guides/voice-websockets?api=live)
+- [GPT Live会话与声音](https://developers.openai.com/api/docs/guides/live-conversations)
+- [GPT Live客户端委派](https://developers.openai.com/api/docs/guides/live-delegation?delegation-mode=client)
+- [通义连接与PCM](https://help.aliyun.com/en/model-studio/realtime)
+- [通义客户端事件](https://help.aliyun.com/en/model-studio/client-events)、[服务端事件](https://help.aliyun.com/en/model-studio/server-events)
+- [通义声音与适用型号](https://help.aliyun.com/en/model-studio/omni-voice-list)：Qwen3.8使用Jennifer/Aiden可分别匹配女声/男声；Ethan仅在其他Omni型号行出现，不能把LiveTranslate表当Omni支持依据。GPT使用官方标示Feminine的gleam与Masculine的meridian；最终选择由根模块lease.voice传入。
+
+## 浏览器资源
+
+ClassroomVoiceClient只在显式start时构造PcmVoiceAudio、申请audio且video:false；server ready之后才启动worklet上传。实际音频播放时钟驱动老师能量，不将网络包抵达当成已发声，不显示字幕。暂停/结束立即关闭本地声音及麦克风，迟到授权返回的stream也会停轨；重连创建新实例。调用方还负责课中退出确认和beforeunload。
+
+scripts/serve-node.mjs将HTTP交给正式Next构建，应用WS交给独立适配。SIGINT/SIGTERM先关连接并释放租约，再关HTTP与Next，12秒兜底退出。它需要根目录提供classroom-runtime.ts及ws生产依赖；单独worktree不复制真实环境、不安装共享依赖。
+
+## 已运行的检查
+
+先添加失败测试，观察缺失实现以及voice override/同题feedback行为失败后补实现。17项新增检查通过：真实本机HTTP+WebSocket、拒绝跨Origin/缺Cookie、原生命令不可透传、ready次序、provider身份持久化失败、启动超时、撤销/截止/晚到工具、上下文/反馈去重、声音选择、麦克风拒绝/晚到权限/背压/旧事件及Node启动清理。
+
+同时复用的通义协议与PCM音频16项检查通过，共33项；定向ESLint和npm run typecheck通过。所有供应商连接在这些检查中均为本机受控fakeupstream，未读取真实密钥、未发送儿童声音、未声称真实模型听感/弱网或供应商最终计量验收。真实短会话与生产构建由主目录集成后单独记录。
+
+```sh
+node --import tsx --test tests/classroom-node-server.test.ts tests/classroom-sockets.test.ts tests/classroom-voice-client.test.ts tests/voice-qwen.test.ts tests/voice-audio.test.ts
+npm run typecheck
+```
