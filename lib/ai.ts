@@ -1,9 +1,9 @@
-import { env } from "cloudflare:workers";
+import { readRuntimeEnv } from "./server/runtime-env";
 import { getChatGPTUser } from "../app/chatgpt-auth";
 import { ApiError } from "./http";
 export { ApiError, readJson } from "./http";
 export function aiConfig() {
-  return { key: env.OPENAI_API_KEY || process.env.OPENAI_API_KEY, model: env.OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-6-astra", transcribe: env.OPENAI_TRANSCRIBE_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-transcribe", childDataReady: (env.OPENAI_CHILD_DATA_READY || process.env.OPENAI_CHILD_DATA_READY) === "true", liveModel: env.OPENAI_LIVE_MODEL || process.env.OPENAI_LIVE_MODEL || "gpt-live-1", liveVoice: env.OPENAI_LIVE_VOICE || process.env.OPENAI_LIVE_VOICE || "gleam", liveBackend: env.OPENAI_LIVE_BACKEND_MODEL || process.env.OPENAI_LIVE_BACKEND_MODEL || "gpt-6-luna" };
+  return { key: readRuntimeEnv("OPENAI_API_KEY"), model: readRuntimeEnv("OPENAI_MODEL") || "gpt-6-astra", transcribe: readRuntimeEnv("OPENAI_TRANSCRIBE_MODEL") || "gpt-transcribe", childDataReady: readRuntimeEnv("OPENAI_CHILD_DATA_READY") === "true", liveModel: readRuntimeEnv("OPENAI_LIVE_MODEL") || "gpt-live-1", liveVoice: readRuntimeEnv("OPENAI_LIVE_VOICE") || "gleam", liveBackend: readRuntimeEnv("OPENAI_LIVE_BACKEND_MODEL") || "gpt-6-luna" };
 }
 export async function authorize(request: Request, options: { requireChildData?: boolean; requireOpenAIKey?: boolean } = {}) {
   const origin = request.headers.get("origin");
