@@ -20,7 +20,7 @@ Object.defineProperty(dom.window.SVGElement.prototype,"setPointerCapture",{value
 Object.defineProperty(dom.window.SVGElement.prototype,"releasePointerCapture",{value:()=>{}});
 Object.defineProperty(dom.window.SVGElement.prototype,"hasPointerCapture",{value:()=>true});
 const { render, screen, fireEvent, waitFor, cleanup, within } = await import("@testing-library/react");
-const { default: Classroom } = await import("../app/page.tsx");
+const { default: Classroom } = await import("../components/legacy-classroom.tsx");
 beforeEach(() => {
   Object.defineProperty(globalThis, "indexedDB", { value: new IDBFactory(), configurable:true });
   globalThis.fetch = async input => String(input).includes("/api/network-check") ? Response.json({ok:true,kind:"littleleaf-network-probe"}) : Response.json({configured:false,mode:"demo"});

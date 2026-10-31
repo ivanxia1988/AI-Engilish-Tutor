@@ -15,7 +15,7 @@ Object.defineProperty(dom.window, 'speechSynthesis', { value: { cancel() {}, get
 Object.defineProperty(globalThis, 'SpeechSynthesisUtterance', { value: class { constructor(public text: string) {} }, configurable: true });
 const { render, screen, fireEvent, waitFor, cleanup } = await import('@testing-library/react');
 const { VoiceProviderPicker, resolvedVoiceStatuses } = await import('../components/voice-provider-picker.tsx');
-const { default: Classroom } = await import('../app/page.tsx');
+const { default: Classroom } = await import('../components/legacy-classroom.tsx');
 const { storage } = await import('../lib/storage.ts');
 
 const statuses: VoiceProviderStatus[] = [

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Littleleaf 小叶英语 · 每一次开口，都在长大",
-  description: "带上自己的教材，和小叶老师一起听、说、圈画，开启一堂有回应的英语课。",
+  title: "Teeko · 陪孩子开口说英语",
+  description: "一个爸爸的英语陪学尝试。看图、聊天、画一画，和 Teeko 一起练习英语表达。",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
