@@ -19,7 +19,7 @@ function harness() {
   const socket = new Socket(); let microphone: (() => Promise<MediaStream>) = async () => { order.push('microphone'); return stream; };
   const dependencies: ClassroomVoiceClientDependencies = {
     media: () => microphone(),
-    socket: url => { assert.equal(url, 'ws://127.0.0.1:8080/api/v1/classrooms/classroom-1/stream'); order.push('socket'); return socket as unknown as WebSocket; },
+    socket: url => { assert.equal(url, 'ws://127.0.0.1:8080/ws/classrooms/classroom-1'); order.push('socket'); return socket as unknown as WebSocket; },
     origin: () => 'http://127.0.0.1:8080',
     audio: options => { audioOptions = options; order.push('audio-gesture'); return { startCapture: async () => { captures++; }, playChunk: () => { playback++; }, cancelPlayback: () => { interrupted++; }, mute() {}, resume: async () => {}, close: () => { audioClosed++; } }; },
     startupMs: 200, closeMs: 10,

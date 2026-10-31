@@ -4,7 +4,7 @@
 
 ## 通路和职责
 
-浏览器只连接同源 `/api/v1/classrooms/{id}/stream`，传100ms、PCM16LE单声道音频帧；输入通义16kHz、GPT Live 24kHz，输出均24kHz。Node持有长期供应商密钥及上游主WebSocket，浏览器不获得密钥、供应商会话ID、任意供应商事件透传或公开发码能力。
+浏览器只连接同源 `/ws/classrooms/{id}`，传100ms、PCM16LE单声道音频帧；输入通义16kHz、GPT Live 24kHz，输出均24kHz。Node持有长期供应商密钥及上游主WebSocket，浏览器不获得密钥、供应商会话ID、任意供应商事件透传或公开发码能力。
 
 本地试上课先复用两家现有模型配置，采用受控PCM中转便于统一终止和PG租约验证；这与原候选GPT WebRTC+sideband通路不同。官方仍推荐WebRTC用于低延迟音频，不能把本切片的主WS实现描述为已验证等价弱网性能。未来可在相同业务租约上单独比较WebRTC，不在本次同时保留两套计费连接。
 
@@ -63,3 +63,9 @@ npm run typecheck
 - GPT每次thinking append复用contextChunks，按480 UTF8字节保守分块；commentary复用spokenUpdate。更新仅携带contextKey、版本、当前题、对象和确认反馈，不重发静态系统规则；当前题英语直接放在新的发声提示前部，避免静默上下文尚未注入时老师缺少新问题。此约束来自官方单append 500 tokens上限，而不是字符数上限。
 
 新增5项回归覆盖延迟response.created、取消确认前禁止重建、回复确认缺失超时、UTF8分块/静态规则不重复，以及新题cue明确含实际问题。相关检查43项通过；真实供应商联网结果仍由主目录记录，不把fakeupstream冒充联网验收。
+
+## Next HTTP与WS升级路径隔离
+
+真实Next入口联调发现：首个HTTP请求会让Next安装自己的upgrade监听器，匹配app路由的升级会被其关闭。此前WS放在/api/v1/classrooms/{id}/stream，被现有/api/v1/[...path]捕获，异步账号鉴权尚未返回就发生socket hang up。
+
+应用WS现独立为/ws/classrooms/{id}，HTTP API继续/api/v1，不触碰Next私有didWebSocketSetup开关或customServer配置。启动入口新增受控依赖注入以测试假上游；新增回归先访问HTTP模拟Next惰性升级监听器，再建立独立WS并等到真实ready事件。该检查模拟Next注册行为，实际Next+PG+供应商链路仍由主目录单独验收。

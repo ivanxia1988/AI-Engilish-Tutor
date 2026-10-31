@@ -57,7 +57,7 @@ export class ClassroomVoiceClient {
       const stream = await this.dependencies.media();
       if (this.stopped) { stream.getTracks().forEach(track => track.stop()); return; }
       this.stream = stream;
-      const url = new URL(`/api/v1/classrooms/${encodeURIComponent(this.options.classroomId)}/stream`, this.dependencies.origin());
+      const url = new URL(`/ws/classrooms/${encodeURIComponent(this.options.classroomId)}`, this.dependencies.origin());
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       this.socket = this.dependencies.socket(url.href);
       const completion = new Promise<void>((resolve, reject) => { this.startResolve = resolve; this.startReject = reject; });

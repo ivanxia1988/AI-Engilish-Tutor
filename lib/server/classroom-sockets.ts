@@ -31,7 +31,7 @@ export type ClassroomSocketOptions = {
 };
 const MAX_BUFFER = 256_000, MAX_OUTPUT_BYTES = 192_000;
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const pathPattern = new RegExp(`^/api/v1/classrooms/(${UUID})/stream$`, 'i');
+const pathPattern = new RegExp(`^/ws/classrooms/(${UUID})$`, 'i');
 const tools = new Set(CLASSROOM_VOICE_TOOLS.map(tool => tool.name));
 const bounded = (value: unknown, length: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= length;
 function configFromEnvironment(provider: VoiceLease['provider']): ClassroomVoiceConfig {

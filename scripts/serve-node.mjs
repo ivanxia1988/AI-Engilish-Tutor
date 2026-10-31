@@ -19,7 +19,7 @@ export async function startNodeClassroomServer(options = {}) {
     });
   });
   const open = options.open ?? (await import('../lib/server/classroom-runtime.ts')).openClassroomVoice;
-  const sockets = attachClassroomSockets(server, { origin, open });
+  const sockets = attachClassroomSockets(server, { ...options.socketOptions, origin, open });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, hostname, () => { server.off('error', reject); resolve(); });

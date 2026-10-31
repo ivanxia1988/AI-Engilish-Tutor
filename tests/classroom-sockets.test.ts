@@ -62,7 +62,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
   app.listen(0, '127.0.0.1'); await once(app, 'listening');
   const address = app.address(); assert(address && typeof address !== 'string');
   const connect = (origin = 'http://localhost:8080', cookie = `teeko_session=${'t'.repeat(43)}`) => {
-    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/api/v1/classrooms/${id}/stream`, { headers: { Origin: origin, Cookie: cookie } });
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws/classrooms/${id}`, { headers: { Origin: origin, Cookie: cookie } });
     socket.on('error', () => {});
     socket.on('message', data => downstream.push(JSON.parse(data.toString())));
     return socket;
