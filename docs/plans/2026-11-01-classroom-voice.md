@@ -44,3 +44,13 @@ scripts/serve-node.mjs将HTTP交给正式Next构建，应用WS交给独立适配
 node --import tsx --test tests/classroom-node-server.test.ts tests/classroom-sockets.test.ts tests/classroom-voice-client.test.ts tests/voice-qwen.test.ts tests/voice-audio.test.ts
 npm run typecheck
 ```
+
+## 集成审阅后的发言证据修正
+
+独立审阅发现：GPT转写原来仅以final:false发送，而PG只保存final:true，因此能对话却不能据此完成口语目标。官方明确GPT transcript deltas没有item ID或completed-turn事件，不能虚构.done事件或把每个delta标为完整回答。
+
+本次以应用音频边界聚合：收到至少200ms有声PCM，随后实际收到至少1200ms连续低能量PCM，再等350ms转写收尾，才把当前任务下的片段聚合为一条应用final。PCM能量阈值0.015为首批实现参数，须用真实家庭音频校准；它不等同于供应商语义终点。单纯转写间隙、网络无包或委派事件均不产生final。更晚或无法确定归属的片段不作为可评分证据。
+
+委派先静默确认等待，只有聚合证据成功落库后才调用根工具；contextKey在发言/委派接收时绑定，换题清除旧聚合和等待委派。Qwen继续使用官方completed ASR事件，先await其落库再处理后续native tool。显式typed输入也单独标source:typed落库后再转发，不用来声称发音质量。transcript契约带必填contextKey/source，根PG按当前课堂任务再校验。
+
+新增5项接缝验证：片段/委派不误作final、PCM边界聚合含晚到后缀、换题丢弃、typed先落库、Qwen completed先落库。相关检查现为38项通过，仍全部使用本机受控fakeupstream；不冒充真实供应商听感验收。

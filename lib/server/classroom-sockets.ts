@@ -13,7 +13,7 @@ export type VoiceLease = {
   remainingMs: number; snapshot: ClassroomSnapshot; voice?: string;
   heartbeat(): Promise<{ snapshot: ClassroomSnapshot; instructions: string } | null>;
   started?(sessionId: string): Promise<void>;
-  transcript(event: { role: 'child' | 'teacher'; text: string; final: boolean; itemId?: string }): Promise<void>;
+  transcript(event: { role: 'child' | 'teacher'; text: string; final: boolean; itemId?: string; contextKey: string; source: 'speech' | 'typed' }): Promise<void>;
   tool(name: string, args: unknown): Promise<{ output: unknown; snapshot: ClassroomSnapshot }>;
   closed(): Promise<void>;
 };
@@ -25,7 +25,7 @@ export type ClassroomSocketOptions = {
   open(request: Request, id: string): Promise<VoiceLease>;
   config?: (provider: VoiceLease['provider']) => ClassroomVoiceConfig;
   connect?: (url: string, headers: Record<string, string>) => WebSocket;
-  heartbeatMs?: number; startupMs?: number; closeMs?: number;
+  heartbeatMs?: number; startupMs?: number; closeMs?: number; utteranceSettleMs?: number;
 };
 const MAX_BUFFER = 256_000, MAX_OUTPUT_BYTES = 192_000;
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
@@ -99,6 +99,11 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     let stepIndex = lease.snapshot.stepIndex, feedbackId = lease.snapshot.feedback?.id, counter = 0, frames = 0, windowStart = Date.now(), messages = 0, lastTextAt = 0, toolsPending = 0;
     let closePromise: Promise<void> | undefined, resolveFinal: (() => void) | undefined;
     const toolsSeen = new Set<string>(), history: { role: 'child' | 'teacher'; text: string }[] = [];
+    const pendingDelegations = new Map<string, { contextKey: string; timer: ReturnType<typeof setTimeout> }>();
+    let utterance = '', utteranceKey = `${lease.id}:${lease.epoch}:${stepIndex}`, utteranceOverflow = false;
+    let voicedMs = 0, silentMs = 0, lastPcmAt = 0, utteranceTimer: ReturnType<typeof setTimeout> | undefined;
+    let completedSpeech: { contextKey: string; itemId: string; used: boolean } | undefined, qwenSpeechKey: string | undefined;
+    const currentKey = () => `${lease.id}:${lease.epoch}:${stepIndex}`;
     const protocol = lease.provider === 'qwen' ? createQwenProtocol({ model: config.model, voice: config.voice }) : null;
     const qwenResponses: string[] = [];
     let qwenUpdates = 0;
@@ -119,6 +124,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const stop = (message?: string) => {
       if (closePromise) return closePromise;
       stopped = true; timers.forEach(timer => clearTimeout(timer)); timers.clear(); clearInterval(heartbeatTimer); clearInterval(pingTimer);
+      resetUtterance();
       if (message) toClient({ type: 'error', message });
       toClient({ type: 'interrupt' });
       closePromise = (async () => {
@@ -152,6 +158,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const context = (snapshot: ClassroomSnapshot, instructions: string, cue: boolean) => {
       if (stopped || snapshot.revision < revision) return;
       const taskChanged = snapshot.stepIndex !== stepIndex, feedbackChanged = snapshot.feedback?.id !== feedbackId;
+      if (taskChanged) resetUtterance();
       revision = snapshot.revision; stepIndex = snapshot.stepIndex; feedbackId = snapshot.feedback?.id;
       toClient({ type: 'snapshot', classroom: snapshot });
       if (protocol) qwenSend(protocol.commands({ type: 'context', instructions })); else append('thinking', instructions);
@@ -187,11 +194,64 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       } finally { toolsPending--; }
     };
     let transcriptChain = Promise.resolve();
-    const record = (role: 'child' | 'teacher', text: string, final: boolean, itemId?: string) => {
+    const record = (role: 'child' | 'teacher', text: string, final: boolean, itemId?: string, contextKey = currentKey(), source: 'speech' | 'typed' = 'speech') => {
       if (!bounded(text, 6000)) return;
       history.push({ role, text }); if (history.length > 16) history.shift();
-      transcriptChain = transcriptChain.then(() => stopped ? undefined : lease.transcript({ role, text, final, ...(itemId ? { itemId } : {}) })).catch(fail);
+      if (!final) return;
+      transcriptChain = transcriptChain.then(() => stopped || contextKey !== currentKey() ? undefined : lease.transcript({ role, text, final, contextKey, source, ...(itemId ? { itemId } : {}) })).catch(fail);
     };
+    function resetUtterance() {
+      if (utteranceTimer) clearTimeout(utteranceTimer); utteranceTimer = undefined;
+      utterance = ''; utteranceOverflow = false; voicedMs = 0; silentMs = 0; completedSpeech = undefined;
+      for (const [delegationId, pending] of pendingDelegations) {
+        clearTimeout(pending.timer);
+        if (!stopped) append('thinking', 'The application task changed. Discard the previous unfinished request.', delegationId);
+      }
+      pendingDelegations.clear();
+    }
+    function dispatchDelegation() {
+      if (stopped || !completedSpeech || completedSpeech.used || completedSpeech.contextKey !== currentKey()) return;
+      const next = [...pendingDelegations].find(([, pending]) => pending.contextKey === currentKey());
+      if (!next) return;
+      const [delegationId, pending] = next;
+      completedSpeech.used = true; pendingDelegations.delete(delegationId); clearTimeout(pending.timer);
+      const contextKey = pending.contextKey;
+      void transcriptChain.then(() => {
+        if (stopped || contextKey !== currentKey()) return;
+        return tool(delegationId, 'delegate', { contextKey, history: [...history] }, delegationId);
+      });
+    }
+    function scheduleUtterance() {
+      if (utteranceTimer) clearTimeout(utteranceTimer);
+      if (stopped || !utterance || utteranceOverflow || voicedMs < 200 || silentMs < 1200) return;
+      const key = utteranceKey;
+      utteranceTimer = setTimeout(() => {
+        utteranceTimer = undefined;
+        // GPT-Live exposes fragments, not a final-turn event. Only measured, contiguous
+        // low-energy PCM after speech supplies this application's utterance boundary.
+        if (stopped || key !== currentKey() || !utterance || utteranceOverflow || silentMs < 1200 || Date.now() - lastPcmAt > 500) return;
+        const text = utterance, itemId = randomUUID();
+        utterance = ''; voicedMs = 0; silentMs = 0;
+        record('child', text, true, itemId, key);
+        completedSpeech = { contextKey: key, itemId, used: false };
+        dispatchDelegation();
+      }, options.utteranceSettleMs ?? 350);
+    }
+    function observePcm(audio: string) {
+      if (protocol) return;
+      const pcm = Buffer.from(audio, 'base64'); let energy = 0;
+      for (let index = 0; index < pcm.length; index += 2) energy += (pcm.readInt16LE(index) / 32768) ** 2;
+      const audible = Math.sqrt(energy / (pcm.length / 2)) >= 0.015;
+      lastPcmAt = Date.now();
+      if (audible) {
+        if (!voicedMs) utteranceKey = currentKey();
+        voicedMs += 100; silentMs = 0;
+        if (utteranceTimer) clearTimeout(utteranceTimer); utteranceTimer = undefined;
+      } else if (voicedMs) {
+        silentMs += 100;
+        if (silentMs === 1200) scheduleUtterance();
+      }
+    }
     const becomeReady = () => {
       if (ready || stopped) return;
       ready = true; clearTimeout(startup);
@@ -226,8 +286,8 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
             becomeReady();
           }
           else if (value.type === 'audio') { if (!toClient({ type: 'audio', audio: value.audio, sampleRate: value.sampleRate })) fail(); }
-          else if (value.type === 'speech_start') { toClient({ type: 'interrupt' }); qwenSend(protocol.commands({ type: 'cancel' })); }
-          else if (value.type === 'transcript' && value.final) record(value.role, value.text, true, value.itemId);
+          else if (value.type === 'speech_start') { qwenSpeechKey = currentKey(); toClient({ type: 'interrupt' }); qwenSend(protocol.commands({ type: 'cancel' })); }
+          else if (value.type === 'transcript' && value.final) record(value.role, value.text, true, value.itemId, value.role === 'child' ? qwenSpeechKey ?? currentKey() : currentKey());
           else if (value.type === 'tool' && tools.has(value.name)) {
             try { const args: unknown = JSON.parse(value.arguments); void transcriptChain.then(() => tool(value.callId, value.name, args)); } catch { fail(); }
           }
@@ -239,12 +299,24 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
           if (!toClient({ type: 'audio', audio: event.delta, sampleRate: 24000 })) fail();
         } else if ((event.type === 'session.input_transcript.delta' || event.type === 'session.output_transcript.delta') && bounded(event.delta, 6000)) {
           record(event.type === 'session.input_transcript.delta' ? 'child' : 'teacher', event.delta, false);
+          if (event.type === 'session.input_transcript.delta') {
+            if (!voicedMs) return;
+            if (!utterance) utteranceKey = currentKey();
+            if (utteranceKey !== currentKey()) return;
+            if (utterance.length + event.delta.length > 1000) utteranceOverflow = true;
+            else utterance += event.delta;
+            scheduleUtterance();
+          }
         } else if (event.type === 'session.delegation.created') {
           const delegation = event.delegation as { id?: unknown; target?: unknown } | undefined;
           if (delegation?.target === 'client' && bounded(delegation.id, 200)) {
             append('thinking', '', delegation.id);
             const delegationId = delegation.id;
-            void transcriptChain.then(() => tool(delegationId, 'delegate', { transcript: history.filter(item => item.role === 'child').map(item => item.text).join('').slice(-1600), history: [...history] }, delegationId));
+            if (toolsSeen.has(delegationId) || pendingDelegations.has(delegationId)) return;
+            if (pendingDelegations.size >= 3) { append('thinking', 'Wait for the learner to finish the current answer. No completed answer has been confirmed.', delegationId); return; }
+            const timer = setTimeout(() => { pendingDelegations.delete(delegationId); if (!stopped) append('thinking', 'No completed learner answer is confirmed yet. Keep listening and never grade a fragment.', delegationId); }, 8000);
+            pendingDelegations.set(delegationId, { contextKey: currentKey(), timer });
+            dispatchDelegation();
           }
         }
       }
@@ -283,13 +355,19 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       if (event.type === 'audio') {
         const expected = lease.provider === 'qwen' ? 3200 : 4800;
         if (++frames > 16 || !bounded(event.audio, Math.ceil(expected / 3) * 4) || !/^[A-Za-z0-9+/]+={0,2}$/.test(event.audio) || Buffer.from(event.audio, 'base64').length !== expected) { fail(); return; }
+        observePcm(event.audio);
         if (protocol) qwenSend(protocol.commands({ type: 'audio', audio: event.audio }));
         else if (!send(upstream, { type: 'session.input_audio.append', audio: event.audio })) fail();
       } else if (event.type === 'text') {
         if (!bounded(event.text, 1000) || Date.now() - lastTextAt < 500) { fail(); return; }
         lastTextAt = Date.now();
-        if (protocol) qwenSend(protocol.commands({ type: 'user_text', text: event.text }));
-        else { append('thinking', `Learner typed reference data: ${JSON.stringify(event.text)}`); void tool(randomUUID(), 'delegate', { transcript: event.text, typed: true }); }
+        const text = event.text, contextKey = currentKey(), itemId = randomUUID();
+        record('child', text, true, itemId, contextKey, 'typed');
+        void transcriptChain.then(() => {
+          if (stopped || contextKey !== currentKey()) return;
+          if (protocol) qwenSend(protocol.commands({ type: 'user_text', text }));
+          else { append('thinking', `Learner typed reference data: ${JSON.stringify(text)}`); void tool(randomUUID(), 'delegate', { contextKey, typed: true }); }
+        });
       } else if (event.type === 'mute' && typeof event.muted === 'boolean' && !protocol) {
         send(upstream, { type: event.muted ? 'session.input_audio.mute' : 'session.input_audio.unmute', event_id: eventId() });
       }
