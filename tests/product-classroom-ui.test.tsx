@@ -48,7 +48,7 @@ function fixture(initial:ClassroomSnapshot=snapshot,behavior:{pauseOnStop?:boole
   return Response.json({ok:true,classroom:current});
  };
  const voiceFactory:import('../components/product/classroom.tsx').VoiceFactory=options=>{callbacks=options;return{async start(){starts++;current={...current,status:'active',revision:current.revision+1};options.onSnapshot(current);options.onState('connected');},async stop(){stops++;if(behavior.pauseOnStop)current={...current,status:'paused',revision:current.revision+1};options.onState('closed');},dispose(){disposes++;},setMuted(){},sendText(){}};};
- return{calls,voiceFactory,checkMicrophone:async()=>true,get starts(){return starts;},get stops(){return stops;},get disposes(){return disposes;},disconnect(next:ClassroomSnapshot,state:'closed'|'error'='closed'){current=next;callbacks?.onState(state);},emit(next:ClassroomSnapshot){current=next;callbacks?.onSnapshot(next);}};
+ return{calls,voiceFactory,checkMicrophone:async()=>true,get starts(){return starts;},get stops(){return stops;},get disposes(){return disposes;},disconnect(next:ClassroomSnapshot,state:'closed'|'error'='closed'){current=next;callbacks?.onState(state);},emit(next:ClassroomSnapshot){current=next;callbacks?.onSnapshot(next);},fail(next:ClassroomSnapshot){current=next;callbacks?.onFailure?.({code:'provider_error',message:'语音服务返回异常，课堂连接已停止，请重新连接。'});callbacks?.onError('语音服务返回异常，课堂连接已停止，请重新连接。');callbacks?.onState('error');}};
 }
 
 test('classroom asks for microphone only after the check click and connects on a separate start gesture',async()=>{
@@ -225,4 +225,40 @@ test('an unanswered microphone permission check times out and cleans any late st
   const checked=checkClassroomMicrophone(()=>{},controller.signal),rejected=assert.rejects(checked,/检查超时/);
   t.mock.timers.tick(30000);await rejected;assert.equal(f.closed,1);f.resolve();await Promise.resolve();await Promise.resolve();assert.equal(f.stopped,1);
  }finally{controller.abort();t.mock.timers.reset();f.restore();}
+});
+
+test('optional camera requests browser video permission only on click and survives the preflight transition',async()=>{
+ const f=fixture();let calls=0,stops=0;
+ const track=document.createElement('span') as unknown as MediaStreamTrack;Object.assign(track,{stop(){stops++;}});
+ const stream={getTracks:()=>[track],getVideoTracks:()=>[track]} as unknown as MediaStream;
+ Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async(constraints:MediaStreamConstraints)=>{calls++;assert.equal(constraints.audio,false);assert.ok(constraints.video);return stream;}}});
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));assert.equal(calls,0);
+ fireEvent.click(screen.getByRole('button',{name:'开启摄像头'}));
+ await waitFor(()=>check(screen.getByLabelText('Mia的摄像头预览')));assert.equal(calls,1);assert.equal((screen.getByLabelText('Mia的摄像头预览') as HTMLVideoElement).srcObject,stream);
+ await startCameraTestLesson();assert.equal(calls,1);assert.equal(stops,0);check(screen.getByRole('button',{name:'关闭摄像头'}));
+ fireEvent.click(screen.getByRole('button',{name:'暂停课堂'}));await waitFor(()=>check(screen.getByRole('heading',{name:'已暂停'})));assert.equal(stops,1);
+});
+
+test('denying camera permission leaves microphone and lesson start available',async()=>{
+ const f=fixture();Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>{throw new DOMException('browser detail','NotAllowedError');}}});
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));fireEvent.click(screen.getByRole('button',{name:'开启摄像头'}));
+ await waitFor(()=>check(screen.getByText(/摄像头未获授权/)));await startCameraTestLesson();assert.equal(f.starts,1);check(screen.getByRole('button',{name:'暂停课堂'}));
+});
+
+async function startCameraTestLesson(){
+ fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));
+ await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));
+ fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
+ await waitFor(()=>check(!(screen.getByRole('button',{name:'暂停课堂'}) as HTMLButtonElement).disabled));
+}
+
+test('transport failure is explained as a broken connection instead of a voluntary pause',async()=>{
+ const f=fixture();render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();
+ f.fail({...snapshot,status:'paused',revision:2,connectionEpoch:1});
+ await waitFor(()=>check(screen.getByRole('heading',{name:'课堂连接中断'})));check(screen.getByRole('alert').textContent?.includes('语音服务返回异常'));
+ assert.equal(screen.getByRole('alert').getAttribute('data-voice-failure'),'provider_error');
+ fireEvent.click(screen.getByRole('button',{name:'继续上课'}));await waitFor(()=>check(screen.getByRole('button',{name:'开始上课'})));assert.equal(f.starts,1);
 });
