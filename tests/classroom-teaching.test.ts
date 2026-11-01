@@ -20,6 +20,17 @@ test('naming accepts concise answers but a fruit mentioned in a story is convers
  assert.equal(spokenTaskAttempt(naming,'apple or banana',words),'retry');
  assert.equal(spokenTaskAttempt(naming,'Not an apple. It is a banana.',words),'retry');
 });
+test('unrelated statements and greetings stay conversation in every speaking activity',()=>{
+ for(const step of PICNIC_COURSE.steps.filter(step=>step.kind==='speak')){
+  for(const text of ['I like dinosaurs.','I love football.','It is raining today.','I will bring my dog.','Hello!','Thanks.','Good morning.'])assert.equal(spokenTaskAttempt(step,text,words),'conversation',`${step.id}: ${text}`);
+ }
+});
+test('invitations accept common equivalent phrases without crediting stories or unrelated questions',()=>{
+ const invite=PICNIC_COURSE.steps.find(step=>step.id==='invite-friend')!;
+ for(const text of ["Let’s go on a picnic!",'Would you like to join our picnic?','Do you want to go on a picnic?','Shall we have a picnic?',"Let's have a picnic in the park!",'Would you like to join us for a picnic, please?'])assert.equal(spokenTaskAttempt(invite,text,words),'correct',text);
+ for(const text of ['Yesterday we had a picnic.','Do you like picnics?','I watched a movie about a picnic.'])assert.equal(spokenTaskAttempt(invite,text,words),'conversation',text);
+ assert.equal(spokenTaskAttempt(invite,"Let’s not have a picnic.",words),'retry');
+});
 test('new picnic course retains v1 and gives choices and applied expressions before open conversation',()=>{
  assert.equal(PICNIC_COURSE_V1.version,'1');assert.equal(PICNIC_COURSE_V1.steps.length,7);
  assert.equal(PICNIC_COURSE.version,'2');assert(PICNIC_COURSE.steps.length>7);
