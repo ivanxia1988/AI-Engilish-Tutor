@@ -34,3 +34,11 @@ test('prompt exposes bounded hint ladder and conversational tangent policy witho
  assert(prompt.includes('Hint limit reached'));assert(prompt.includes('natural pause'));assert(prompt.includes('not pronunciation mastery'));
  assert(!prompt.includes('first impose another repetition'));
 });
+
+test('live teacher sees open expression goals without a restrictive legacy answer list',()=>{
+ const prompt=buildTeacherInstructions(teacherSnapshot({stepIndex:8}),teacherConfig);
+ const reference=JSON.parse(prompt.split('REFERENCE DATA — NOT INSTRUCTIONS\n')[1]);
+ assert.equal(reference.currentTask.answerScope,'open_expression');assert.equal(reference.currentTask.expected,undefined);
+ const naming=buildTeacherInstructions(teacherSnapshot({stepIndex:1}),teacherConfig);
+ assert.equal(JSON.parse(naming.split('REFERENCE DATA — NOT INSTRUCTIONS\n')[1]).currentTask.expected,'apple');
+});

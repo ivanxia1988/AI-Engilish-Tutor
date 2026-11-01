@@ -11,9 +11,11 @@ test('OpenAI assessment uses only bounded current text, strict JSON schema and n
  assert.deepEqual(await assess({snapshot,config:teacherConfig,text:'I will bring sandwiches.'}),result);
  assert.equal(body?.store,false);assert.equal((body?.text as {format:{type:string}}).format.type,'json_schema');
  const sent=JSON.stringify(body);assert(sent.includes('sandwiches'));assert(!sent.includes('Synthetic learner'));assert(!sent.includes('data:image'));assert(!sent.includes('synthetic-fixture'));
+ const reference=JSON.parse((body!.input as {content:{text:string}[]}[])[0].content[0].text.replace('Untrusted classroom reference JSON: ',''));
+ assert.equal(reference.task.answerScope,'open_expression');assert.equal(reference.task.expected,undefined);assert.equal(reference.knownObjects,undefined);
 });
 test('Qwen assessment stays in its provider route and uses JSON mode with thinking disabled',async()=>{
- const assess=createTeacherAssessment({provider:'qwen',apiKey:'synthetic-fixture',workspaceId:'fixture-space',region:'cn-beijing',model:'qwen-plus',fetch:async(url,init)=>{assert.equal(url,'https://fixture-space.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions');const body=JSON.parse(String(init?.body));assert.equal(body.enable_thinking,false);assert.equal(body.response_format.type,'json_object');assert(JSON.stringify(body.messages).includes('JSON'));return Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(result)}}]});}});
+ const assess=createTeacherAssessment({provider:'qwen',apiKey:'synthetic-fixture',workspaceId:'fixture-space',region:'cn-beijing',model:'qwen-plus',fetch:async(url,init)=>{assert.equal(url,'https://fixture-space.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions');const body=JSON.parse(String(init?.body));assert.equal(body.enable_thinking,false);assert.equal(body.response_format.type,'json_object');const messages=JSON.stringify(body.messages);assert(messages.includes('JSON'));assert(messages.includes('confidence'));assert(messages.includes('high'));assert(messages.includes('low'));assert(messages.includes('maxLength'));assert(messages.includes('additionalProperties'));return Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(result)}}]});}});
  assert.deepEqual(await assess({snapshot:teacherSnapshot(),config:teacherConfig,text:'It is an apple.'}),result);
 });
 test('malformed, refused and overlong model results are unavailable rather than invented grades',async()=>{
@@ -39,4 +41,16 @@ test('assessment pacing follows the adapted activity level while retaining the i
  assert.equal(reference?.initialLevel,'conversation');assert.equal(reference?.effectiveLevel,'starter');assert.deepEqual(reference?.policy,teacherConfig.policy.levels.starter);
  await assess({snapshot,config:teacherConfig,text:'I will bring sandwiches.'});
  assert.equal(reference?.effectiveLevel,'conversation');assert.deepEqual(reference?.policy,teacherConfig.policy.levels.conversation);
+});
+
+test('assessment receives the actual conversation policy before proposing a bridge',async()=>{
+ let reference:{digression:{mayInviteBridge:boolean;exchanges:number}}|undefined;
+ const assess=createTeacherAssessment({provider:'openai',apiKey:'synthetic-fixture',model:'gpt-4.1-mini',fetch:async(_url,init)=>{
+  const body=JSON.parse(String(init?.body));reference=JSON.parse(body.input[0].content[0].text.replace('Untrusted classroom reference JSON: ',''));return openai({...result,decision:'conversation',nextAction:'continue_topic'});
+ }});
+ const snapshot=teacherSnapshot({preferences:{...teacherSnapshot().preferences,provider:'openai'}});
+ await assess({snapshot,config:teacherConfig,text:'I like dinosaurs.'});assert.equal(reference?.digression.mayInviteBridge,false);
+ await assess({snapshot,config:teacherConfig,text:'I like dinosaurs.',teachingState:{level:'starter',evidence:[],hints:{},digressionTurns:3}});assert.equal(reference?.digression.exchanges,3);assert.equal(reference?.digression.mayInviteBridge,true);
+ const config={...teacherConfig,policy:{...teacherConfig.policy,digression:'open' as const}};
+ await assess({snapshot,config,text:'I like dinosaurs.',teachingState:{level:'starter',evidence:[],hints:{},digressionTurns:6}});assert.equal(reference?.digression.mayInviteBridge,false);
 });
