@@ -78,7 +78,7 @@ test('historical activation asks for confirmation and user usage remains separat
 });
 test('a denied admin response never exposes editable configuration or fake success',async()=>{
  fixture({unauthorized:true});render(<AdminConsole/>);await waitFor(()=>assert(screen.getByRole('alert').textContent?.includes('没有管理权限')));
- assert.equal(screen.queryByRole('button',{name:'保存草稿'}),null);assert.equal(screen.queryByText('12'),null);
+ assert.equal(screen.queryByRole('button',{name:'保存草稿'}),null);assert.equal(screen.queryByText('12'),null);assert.equal(screen.getByRole('link',{name:'返回登录'}).getAttribute('href'),'/admin/login');
 });
 
 test('admin logout uses its separate session and returns to admin login',async()=>{
@@ -87,4 +87,21 @@ test('admin logout uses its separate session and returns to admin login',async()
  await waitFor(()=>assert.deepEqual(destinations,['/admin/login']));
  assert(f.calls.some(item=>item.url==='/api/v1/admin/auth/logout'&&item.method==='POST'));
  assert(!f.calls.some(item=>item.url==='/api/v1/auth/logout'));
+});
+test('leaving an edited draft asks once and clears the browser warning after discard',async()=>{
+ fixture();const destinations:string[]=[];render(<AdminConsole navigate={path=>{const event=new window.Event('beforeunload',{cancelable:true});window.dispatchEvent(event);assert.equal(event.defaultPrevented,false);destinations.push(path);}}/>);
+ await openAgents();fireEvent.change(screen.getByLabelText('智能体名称'),{target:{value:'未保存的名字'}});
+ fireEvent.click(screen.getByRole('button',{name:'模型配置'}));assert(screen.getByRole('dialog',{name:'放弃未保存的更改？'}));fireEvent.keyDown(screen.getByRole('dialog'),{key:'Escape'});
+ assert.equal((screen.getByLabelText('智能体名称') as HTMLInputElement).value,'未保存的名字');
+ fireEvent.click(screen.getAllByRole('link',{name:'回到我的课程'})[0]);assert(screen.getByRole('dialog',{name:'放弃未保存的更改？'}));
+ await clickAsync(screen.getByRole('button',{name:'放弃更改'}));assert.deepEqual(destinations,['/courses']);
+});
+test('a delayed tryout cannot display the previous answer after input changes',async()=>{
+ fixture();const original=globalThis.fetch;let resolve:((response:Response)=>void)|undefined;
+ globalThis.fetch=async(input,init)=>String(input).endsWith('/tryout')?new Promise<Response>(done=>{resolve=done;}):original(input,init);
+ render(<AdminConsole/>);await openAgents();fireEvent.click(screen.getByRole('tab',{name:'预览与试教'}));
+ fireEvent.click(screen.getByRole('button',{name:'开始文字试教'}));assert(resolve);
+ fireEvent.change(screen.getByLabelText('模拟孩子的回答'),{target:{value:'I want to talk about football.'}});
+ await act(async()=>{resolve!(Response.json({ok:true,result:{decision:'conversation',confidence:'high',reason:'OLD_RESULT',suggestedResponse:'Old dinosaur reply.',nextAction:'follow_topic'}}));await new Promise(done=>setTimeout(done,0));});
+ assert.equal(screen.queryByText('OLD_RESULT'),null);assert.equal(screen.queryByText('Old dinosaur reply.'),null);
 });
