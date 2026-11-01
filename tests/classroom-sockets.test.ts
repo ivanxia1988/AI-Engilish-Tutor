@@ -7,6 +7,7 @@ import { attachClassroomSockets, type VoiceLease } from '../lib/server/classroom
 import type { ClassroomSnapshot } from '../lib/classroom-contract';
 import { refreshClassroom } from '../lib/server/classroom-events';
 import type { PcmOutputClock } from '../lib/server/classroom-audio';
+import type {ClassroomVisionObserver} from '../lib/classroom-vision';
 
 const id = '6e98bb60-4ed0-4c64-bcbc-174d5dcb26c2';
 const snapshot = { id, revision: 1, stepIndex: 0, connectionEpoch: 1, status: 'active', preferences: { voice: 'female' }, teacherObjectIds: [], feedback: null,
@@ -16,7 +17,7 @@ const waitFor = async (condition: () => boolean) => {
   const end = Date.now() + 2000;
   while (!condition()) { if (Date.now() >= end) throw new Error('Expected socket event did not arrive.'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
-async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; refreshOnTool?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string } = {}) {
+async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; refreshOnTool?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string; observe?:ClassroomVisionObserver } = {}) {
   const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp });
   const sent: Record<string, unknown>[] = [], downstream: Record<string, unknown>[] = [], transcripts: unknown[] = [], tools: unknown[] = [];
   let upstream: WebSocket | undefined, opened = 0, released = 0, heartbeatAllowed = true, current = snapshot, resolveTool: (() => void) | undefined, resolveTranscript: (() => void) | undefined, persistedStarts = 0;
@@ -39,7 +40,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
   const vendorAddress = upstreamHttp.address(); assert(vendorAddress && typeof vendorAddress !== 'string');
   const app = createServer();
   const lease: VoiceLease = {
-    id, epoch: 1, provider, instructions: 'Current verified task: find apple.', initialCue: 'Can you find the apple?', remainingMs: extra.remainingMs ?? 60000, snapshot, ...(extra.voice ? { voice: extra.voice } : {}),
+    id, epoch: 1, provider, instructions: 'Current verified task: find apple.', initialCue: 'Can you find the apple?', remainingMs: extra.remainingMs ?? 60000, snapshot, observe:extra.observe, ...(extra.voice ? { voice: extra.voice } : {}),
     async heartbeat() {
       heartbeatCalls++; const captured = current;
       if (delayHeartbeat) { delayHeartbeat = false; await new Promise<void>(resolve => { releaseHeartbeat = resolve; }); }
@@ -70,7 +71,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
     socket.on('message', data => downstream.push(JSON.parse(data.toString())));
     return socket;
   };
-  return { connect, sent, downstream, transcripts, tools, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, get heartbeatCalls() { return heartbeatCalls; }, delayNextHeartbeat: () => { delayHeartbeat = true; }, releaseHeartbeat: () => releaseHeartbeat?.(), revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1, course: { ...snapshot.course, version: extra.contextVersion ?? snapshot.course.version } }; }, feedback: (message = 'Try once more.') => { current = { ...current, revision: current.revision + 1, feedback: { id: `feedback_${current.revision + 1}`, kind: 'retry', message } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
+  return { connect, sent, downstream, transcripts, tools, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, get heartbeatCalls() { return heartbeatCalls; },get transcriptWaiting(){return !!resolveTranscript;}, delayNextHeartbeat: () => { delayHeartbeat = true; }, releaseHeartbeat: () => releaseHeartbeat?.(), revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1, course: { ...snapshot.course, version: extra.contextVersion ?? snapshot.course.version } }; }, feedback: (message = 'Try once more.') => { current = { ...current, revision: current.revision + 1, feedback: { id: `feedback_${current.revision + 1}`, kind: 'retry', message } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
 }
 
 function pcmFrame(voiced: boolean) {
@@ -269,10 +270,14 @@ test('Qwen completed ASR persists its captured task before the following native 
   const h = await harness('qwen', { delayedTranscript: true });
   try {
     const socket = h.connect(); await once(socket, 'open'); await waitFor(() => h.downstream.some(event => event.type === 'ready'));
+    // A native tool belongs to a response after VAD, never to a still-cancelling greeting.
+    h.upstream!.send(JSON.stringify({type:'response.done'}));
     h.upstream!.send(JSON.stringify({ type: 'input_audio_buffer.speech_started' }));
+    h.upstream!.send(JSON.stringify({type:'input_audio_buffer.speech_stopped'}));
+    h.upstream!.send(JSON.stringify({type:'response.created'}));
     h.upstream!.send(JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'Apple.', item_id: 'asr_1' }));
     h.upstream!.send(JSON.stringify({ type: 'response.function_call_arguments.done', name: 'submit_spoken_answer', call_id: 'tool_1', arguments: JSON.stringify({ contextKey: `${id}:1:0`, answer: 'Apple.' }) }));
-    await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(h.tools.length, 0);
+    await waitFor(()=>h.transcriptWaiting);assert.equal(h.tools.length, 0);
     h.resolveTranscript(); await waitFor(() => h.tools.length === 1);
     const evidence = (h.tools[0] as { finalEvidence: { text: string; contextKey: string; source: string }[] }).finalEvidence;
     assert.equal(evidence[0].contextKey, `${id}:1:0`); assert.equal(evidence[0].source, 'speech'); assert.equal(evidence[0].text, 'Apple.');
@@ -672,4 +677,45 @@ test('closing GPT during the recovery quiet window never appends a late recovery
     assert.equal(h.sent.filter(event => event.type === 'session.commentary.append').length, 2);
     assert.equal(h.sent.filter(event => event.type === 'session.start').length, 1); assert.equal(h.opened, 1); assert.equal(h.released, 1);
   } finally { await h.close(); }
+});
+
+
+const visionJpeg=Buffer.from([255,216,255,192,0,11,8,0,240,1,64,1,1,17,0,255,217]).toString('base64');
+test('authenticated Qwen camera frames use native image append and invalid images keep voice connected',async()=>{
+ const h=await harness();try{
+  const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));
+  socket.send(JSON.stringify({type:'vision.start',generation:1}));
+  socket.send(JSON.stringify({type:'audio',audio:Buffer.alloc(3200).toString('base64')}));await waitFor(()=>h.sent.some(event=>event.type==='input_audio_buffer.append'));
+  socket.send(JSON.stringify({type:'vision.frame',generation:1,sequence:1,image:visionJpeg}));
+  await waitFor(()=>h.sent.some(event=>event.type==='input_image_buffer.append'));
+  assert.equal(h.sent.find(event=>event.type==='input_image_buffer.append')?.image,visionJpeg);
+  socket.send(JSON.stringify({type:'vision.frame',generation:1,sequence:2,image:'bad JPEG'}));
+  await waitFor(()=>h.downstream.some(event=>event.type==='vision.state'&&event.status==='error'));
+  assert.equal(h.released,0);assert.equal(socket.readyState,WebSocket.OPEN);assert(!h.downstream.some(event=>event.type==='error'));
+ }finally{await h.close();}
+});
+test('GPT camera frames go through its observer and only textual observations enter Live',async()=>{
+ let called=0;const h=await harness('openai',{observe:async input=>{called++;assert.equal(input.image,visionJpeg);return{visible:true,description:'A blue toy car is visible.'};}});
+ try{
+  const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));
+  socket.send(JSON.stringify({type:'vision.start',generation:1}));socket.send(JSON.stringify({type:'vision.frame',generation:1,sequence:1,image:visionJpeg}));
+  await waitFor(()=>h.sent.some(event=>event.type==='session.thinking.append'&&String(event.content).includes('A blue toy car')));
+  assert.equal(called,1);assert(!h.sent.some(event=>event.type==='input_image_buffer.append'||JSON.stringify(event).includes(visionJpeg)));
+  socket.send(JSON.stringify({type:'vision.stop',generation:1}));await waitFor(()=>h.downstream.some(event=>event.type==='vision.state'&&event.status==='off'));assert.equal(h.released,0);
+ }finally{await h.close();}
+});
+
+test('vision control messages retain the small non-image message limit',async()=>{
+ const h=await harness();try{const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));socket.send(JSON.stringify({type:'vision.start',generation:1,padding:'x'.repeat(40000)}));await waitFor(()=>h.downstream.some(event=>event.type==='error'));assert.equal(h.downstream.find(event=>event.type==='error')?.code,'protocol_error');}finally{await h.close();}
+});
+
+test('a recoverable provider image-parameter error stops only vision; unrelated errors still stop voice',async()=>{
+ const h=await harness();try{
+  const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));
+  socket.send(JSON.stringify({type:'vision.start',generation:1}));socket.send(JSON.stringify({type:'audio',audio:Buffer.alloc(3200).toString('base64')}));await waitFor(()=>h.sent.some(event=>event.type==='input_audio_buffer.append'));
+  socket.send(JSON.stringify({type:'vision.frame',generation:1,sequence:1,image:visionJpeg}));await waitFor(()=>h.sent.some(event=>event.type==='input_image_buffer.append'));
+  h.upstream!.send(JSON.stringify({type:'error',error:{type:'invalid_request_error',param:'image',code:'invalid_value',message:'private provider text must not be forwarded'}}));
+  await waitFor(()=>h.downstream.some(event=>event.type==='vision.state'&&event.status==='error'));assert.equal(h.released,0);assert.equal(socket.readyState,WebSocket.OPEN);assert(!JSON.stringify(h.downstream).includes('private provider text'));
+  h.upstream!.send(JSON.stringify({type:'error',error:{type:'invalid_request_error',param:'session.modalities',code:'invalid_value'}}));await waitFor(()=>h.released===1);assert(h.downstream.some(event=>event.type==='error'&&event.code==='provider_error'));
+ }finally{await h.close();}
 });

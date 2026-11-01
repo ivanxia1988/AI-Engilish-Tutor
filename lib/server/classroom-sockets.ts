@@ -11,10 +11,12 @@ import { contextChunks, spokenUpdate } from '../live-agent';
 import { readRuntimeEnv } from './runtime-env';
 import { subscribeClassroomRefresh } from './classroom-events';
 import { PcmOutputPacer, type PcmOutputClock } from './classroom-audio';
+import {ClassroomVisionSession} from './classroom-vision-session';
+import {CLASSROOM_VISION_MAX_BASE64,type ClassroomVisionObserver} from '../classroom-vision';
 
 export type VoiceLease = {
   id: string; epoch: number; provider: 'qwen' | 'openai'; instructions: string; initialCue: string;
-  remainingMs: number; snapshot: ClassroomSnapshot; voice?: string;
+  remainingMs: number; snapshot: ClassroomSnapshot; voice?: string; observe?:ClassroomVisionObserver;
   heartbeat(): Promise<{ snapshot: ClassroomSnapshot; instructions: string } | null>;
   started?(sessionId: string): Promise<void>;
   transcript(event: { role: 'child' | 'teacher'; text: string; final: boolean; itemId?: string; contextKey: string; source: 'speech' | 'typed' }): Promise<void>;
@@ -70,7 +72,7 @@ function json(data: WebSocket.RawData): Record<string, unknown> | null {
 
 /** Only this process owns provider connections; PostgreSQL lease validation remains authoritative. */
 export function attachClassroomSockets(server: Server, options: ClassroomSocketOptions) {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 32_768, perMessageDeflate: false });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: CLASSROOM_VISION_MAX_BASE64+4096, perMessageDeflate: false });
   const connections = new Set<() => Promise<void>>();
   let closing = false, pending = 0;
   const upgrade = async (request: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -110,6 +112,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     let refreshQueued = false, refreshPromise: Promise<void> | undefined, unsubscribeRefresh: () => void = () => {};
     let stepIndex = lease.snapshot.stepIndex, feedbackId = lease.snapshot.feedback?.id, counter = 0, frames = 0, windowStart = Date.now(), messages = 0, lastTextAt = 0, toolsPending = 0;
     let closePromise: Promise<void> | undefined, resolveFinal: (() => void) | undefined;
+    let audioStarted=false,imageSent=false,latestSnapshot=lease.snapshot,latestInstructions=lease.instructions;
     const toolsSeen = new Set<string>(), history: { role: 'child' | 'teacher'; text: string }[] = [];
     const pendingDelegations = new Map<string, { contextKey: string; timer: ReturnType<typeof setTimeout> }>();
     let utterance = '', utteranceKey = `${lease.id}:${lease.epoch}:${stepIndex}`, utteranceOverflow = false;
@@ -148,7 +151,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const stop = (code?: ClassroomVoiceErrorCode) => {
       if (closePromise) return closePromise;
       unsubscribeRefresh();
-      stopped = true; timers.forEach(timer => clearTimeout(timer)); timers.clear(); clearInterval(heartbeatTimer); clearInterval(pingTimer);
+      stopped = true; vision?.close(); timers.forEach(timer => clearTimeout(timer)); timers.clear(); clearInterval(heartbeatTimer); clearInterval(pingTimer);
       outputPacer.close();
       clearGptOutputGate();
       resetUtterance();
@@ -264,6 +267,9 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       const taskChanged = snapshot.stepIndex !== stepIndex, feedbackChanged = snapshot.feedback?.id !== feedbackId;
       if (taskChanged) { resetUtterance(); qwenOutputAllowed = false; if (protocol) clearPlayback(); else gateGptOutput(); }
       revision = snapshot.revision; stepIndex = snapshot.stepIndex; feedbackId = snapshot.feedback?.id;
+      latestSnapshot=snapshot;latestInstructions=instructions;
+      if(taskChanged)vision?.contextChanged();
+      instructions=cameraInstructions(instructions);
       toClient({ type: 'snapshot', classroom: snapshot });
       const step = snapshot.course.steps[snapshot.stepIndex];
       if (protocol) enqueueQwen({ type: 'context', instructions });
@@ -395,7 +401,13 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       const event = json(data); if (!event) { fail(); return; }
       if (event.type === 'session.closed') { finish(); void stop(stopped ? undefined : 'upstream_closed'); return; }
       if (stopped) return;
-      if (event.type === 'error') { fail('provider_error'); return; }
+      if (event.type === 'error') {
+        const error=event.error as {type?:unknown;param?:unknown}|undefined;
+        const imageParameter=typeof error?.param==='string'&&(error.param==='image'||error.param.startsWith('image.')||error.param==='input_image_buffer.append');
+        // Only a documented recoverable image input error belongs to this optional channel.
+        if(protocol&&imageSent&&error?.type==='invalid_request_error'&&imageParameter){vision.imageRejected();return;}
+        fail('provider_error');return;
+      }
       if (protocol) {
         for (const value of protocol.parse(event)) {
           if (value.type === 'session_created') void providerStarted(value.sessionId, true);
@@ -510,6 +522,20 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       })();
       return refreshPromise;
     };
+    function cameraInstructions(instructions:string){
+      return `${instructions}\nCamera sharing reference: ${vision?.sharing?'Live camera sharing is enabled. Use actual current camera input or a current backend visual observation only when useful; do not narrate every frame. Never infer identity, feelings, attention or comprehension, and never grade from video.':'Camera sharing is off. No current camera view is available. Earlier images or observations are historical, not live; do not claim to see the learner now.'}`;
+    }
+    const invalidateCameraObservation=()=>{if(!stopped&&!protocol)append('thinking',JSON.stringify({cameraObservation:null,contextKey:currentKey(),note:'No current verified visual observation; do not reuse earlier camera descriptions as current.'}));};
+    const vision=new ClassroomVisionSession({provider:lease.provider,observe:lease.observe,
+      context:()=>({key:currentKey(),objective:latestSnapshot.course.steps[stepIndex]?.english??'Listen to the learner.'}),
+      authorize:async()=>{await refreshConnection();return !stopped;},
+      canSendQwen:()=>audioStarted&&qwenConfigured,
+      sendQwen:image=>{const sent=send(upstream,{type:'input_image_buffer.append',event_id:eventId(),image});if(sent)imageSent=true;return sent;},
+      status:state=>{toClient({type:'vision.state',...state});},
+      sharingChanged:()=>{if(stopped)return;if(protocol)enqueueQwen({type:'context',instructions:cameraInstructions(latestInstructions)});else append('thinking',JSON.stringify({contextKey:currentKey(),cameraSharing:vision?.sharing,note:vision?.sharing?'Wait for a current visual observation before describing what you see.':'Camera sharing stopped. Do not claim a current camera view.'}));},
+      invalidated:invalidateCameraObservation,
+      observed:(observation,first)=>{if(stopped||protocol)return;append('thinking',JSON.stringify({contextKey:currentKey(),cameraObservation:{...observation,untrusted:true},note:'Use as fallible visual reference only; no identity, feelings, comprehension or grading inference.'}));if(first)append('commentary',`Briefly acknowledge the newly shared camera in one sentence, then listen. Describe only this fallible observation: ${JSON.stringify(observation.description)}`);},
+    });
     const heartbeatTimer = setInterval(() => { void refreshConnection(); }, options.heartbeatMs ?? 2000);
     unsubscribeRefresh = subscribeClassroomRefresh(lease.id, refreshConnection);
     const startup = setTimeout(() => { void stop('startup_timeout'); }, options.startupMs ?? 20000);
@@ -523,6 +549,9 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       if (++messages > 24) { fail('input_rate_limited'); return; }
       if (binary) { fail('protocol_error'); return; }
       const event = json(data);
+      const messageBytes=Array.isArray(data)?Buffer.concat(data).length:data instanceof ArrayBuffer?data.byteLength:data.length;
+      if(event?.type!=='vision.frame'&&messageBytes>32768){fail('protocol_error');return;}
+      if(event&&typeof event.type==='string'&&event.type.startsWith('vision.')){if(ready)void vision?.handle(event);return;}
       if (!event || !['audio', 'text', 'ping', 'close', 'mute'].includes(String(event.type))) { fail('protocol_error'); return; }
       if (event.type === 'close') { void stop(); return; }
       if (event.type === 'ping') { toClient({ type: 'pong' }); return; }
@@ -532,7 +561,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         if (++frames > 16) { fail('input_rate_limited'); return; }
         if (!bounded(event.audio, Math.ceil(expected / 3) * 4) || !/^[A-Za-z0-9+/]+={0,2}$/.test(event.audio) || Buffer.from(event.audio, 'base64').length !== expected) { fail('invalid_audio'); return; }
         observePcm(event.audio);
-        if (protocol) enqueueQwen({ type: 'audio', audio: event.audio });
+        if (protocol) {enqueueQwen({ type: 'audio', audio: event.audio });audioStarted=true;}
         else if (!send(upstream, { type: 'session.input_audio.append', audio: event.audio })) fail();
       } else if (event.type === 'text') {
         if (!bounded(event.text, 1000) || Date.now() - lastTextAt < 500) { fail(); return; }
