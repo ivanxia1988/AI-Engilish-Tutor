@@ -58,6 +58,9 @@ test('admin config, publication and real usage are persistent and permission bou
   const disabled=await f.service.createAgent(f.owner,{...DEFAULT_TEACHER_AGENT,routes:{...DEFAULT_TEACHER_AGENT.routes,qwen:{...DEFAULT_TEACHER_AGENT.routes.qwen,reasoningModelId:reasoning.id}}});
   await rejectsCode(f.service.publishAgent(f.owner,disabled.id,1),'MODEL_BINDING');
   const inactive=await f.service.createAgent(f.owner,{...DEFAULT_TEACHER_AGENT,enabled:false});await rejectsCode(f.service.publishAgent(f.owner,inactive.id,1),'AGENT_DISABLED');
+  const unsupported=await f.service.createModel(f.owner,{...DEFAULT_TEACHER_MODELS[0].input,name:'Future realtime configuration',model:'qwen-fixture-unsupported-realtime'});
+  const unsupportedAgent=await f.service.createAgent(f.owner,{...DEFAULT_TEACHER_AGENT,routes:{...DEFAULT_TEACHER_AGENT.routes,qwen:{...DEFAULT_TEACHER_AGENT.routes.qwen,realtimeModelId:unsupported.id}}});
+  await rejectsCode(f.service.publishAgent(f.owner,unsupportedAgent.id,1),'MODEL_BINDING');
   await rejectsCode(f.service.createModel(f.other,DEFAULT_TEACHER_MODELS[0].input),'FORBIDDEN');
  });
  await t.test('concurrent publishes serialize versions and offline draft resolution cannot activate itself',async t=>{
@@ -88,5 +91,18 @@ test('admin config, publication and real usage are persistent and permission bou
   assert.equal(stats.usageSeconds,130);assert.equal(stats.activeUsers,1);assert.equal(stats.classroomCount,1);assert.equal(stats.endedCount,1);
   assert.deepEqual(stats.providerUsage,[{provider:'qwen',seconds:45,classrooms:1},{provider:'openai',seconds:0,classrooms:0}]);
   assert.deepEqual(stats.endings,[{reason:'manual',count:2}]);
+ });
+ await t.test('dedicated administrator actors remain authorized but never count as real users or classroom usage',async t=>{
+  const f=await fixture(t);await initializeTeacherAgents(f.pool);await publishTrialCourses(f.pool);
+  const internal=randomUUID();
+  await f.pool.query("INSERT INTO teeko_accounts(id,email,password_hash,consent_version,consented_at,created_at) VALUES($1,'operator@internal.invalid','unusable-fixture','internal-admin',now(),'2026-11-01T01:00:00Z')",[internal]);
+  await f.service.grantAdmin(internal);assert.equal(await f.service.isAdmin(internal),true);
+  const before=await f.service.overview(internal,7);assert.equal(before.registeredUsers,2);assert.equal(before.newUsers,2);
+  await f.pool.query("INSERT INTO teeko_profiles(account_id,name,age_range,level,updated_at) VALUES($1,'Internal actor','10–11','unsure',now())",[internal]);
+  await f.pool.query("INSERT INTO teeko_classroom_usage(account_id,day_key,milliseconds) VALUES($1,'2026-11-01',900000)",[internal]);
+  const course=(await f.pool.query("SELECT version FROM teeko_courses WHERE id='picnic' ORDER BY published_at DESC LIMIT 1")).rows[0].version;
+  await f.pool.query(`INSERT INTO teeko_classrooms(id,account_id,course_id,course_version,profile,preferences,status,max_ms,started_at,day_key,ended_at,end_reason,elapsed_ms) VALUES($1,$2,'picnic',$3,'{}','{"provider":"qwen"}','ended',900000,'2026-11-01T01:00:00Z','2026-11-01','2026-11-01T01:15:00Z','manual',900000)`,[randomUUID(),internal,course]);
+  assert.deepEqual(await f.service.overview(internal,7),before);
+  const users=await f.service.users(internal,{page:0,pageSize:50});assert.equal(users.total,2);assert(!users.users.some(user=>user.id===internal));
  });
 });

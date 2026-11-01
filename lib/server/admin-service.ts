@@ -29,6 +29,7 @@ async function resolve(db:Database,value:TeacherAgentInput,identity:TeacherRelea
  const binding=(id:string|null,provider:'qwen'|'openai',purpose:TeacherModelInput['purpose']):TeacherModel|null=>{
   if(!id)return null;const selected=models.get(id);
   if(!selected||!selected.enabled||selected.provider!==provider||selected.purpose!==purpose)fail('MODEL_BINDING','绑定模型不存在、已停用或与服务和用途不符。');
+  if(provider==='qwen'&&purpose==='realtime'&&!['qwen3.8-omni-flash-realtime','qwen3.5-omni-plus-realtime','qwen3.5-omni-flash-realtime'].includes(selected.model))fail('MODEL_BINDING','当前通义实时适配器不支持这个模型，请选择已支持的实时模型。');
   return selected;
  };
  const qwenLive=binding(value.routes.qwen.realtimeModelId,'qwen','realtime'),qwenReasoning=binding(value.routes.qwen.reasoningModelId,'qwen','reasoning');
@@ -117,22 +118,22 @@ export class AdminService {
  async overview(accountId:string,days:number):Promise<AdminOverview>{return this.authorized(accountId,async db=>{
   if(days!==7&&days!==30)fail('INVALID_INPUT','统计范围仅支持最近7天或30天。',400);
   const today=new Date(this.now().getTime()+8*3600000).toISOString().slice(0,10),from=new Date(Date.parse(`${today}T00:00:00+08:00`)-(days-1)*86400000),dayKey=new Date(from.getTime()+8*3600000).toISOString().slice(0,10);
-  const accounts=(await db.query('SELECT count(*)::int registered,count(*) FILTER(WHERE created_at >= $1 AND created_at <= $2)::int new FROM teeko_accounts',[from,this.now()])).rows[0];
-  const profiles=Number((await db.query('SELECT count(*)::int count FROM teeko_profiles')).rows[0].count);
-  const usage=(await db.query('SELECT count(DISTINCT account_id) FILTER(WHERE milliseconds>0)::int active,COALESCE(sum(milliseconds),0) AS milliseconds FROM teeko_classroom_usage WHERE day_key >= $1 AND day_key <= $2',[dayKey,today])).rows[0];
-  const classrooms=(await db.query("SELECT count(*)::int classrooms,count(*) FILTER(WHERE status='ended')::int ended FROM teeko_classrooms WHERE started_at >= $1 AND started_at <= $2",[from,this.now()])).rows[0];
-  const providerRows=(await db.query("SELECT preferences->>'provider' AS provider,count(*)::int classrooms,COALESCE(sum(elapsed_ms),0) milliseconds FROM teeko_classrooms WHERE started_at >= $1 AND started_at <= $2 GROUP BY preferences->>'provider'",[from,this.now()])).rows;
-  const endings=(await db.query("SELECT end_reason AS reason,count(*)::int count FROM teeko_classrooms WHERE status='ended' AND ended_at >= $1 AND ended_at <= $2 GROUP BY end_reason ORDER BY end_reason",[from,this.now()])).rows;
+  const accounts=(await db.query("SELECT count(*)::int registered,count(*) FILTER(WHERE created_at >= $1 AND created_at <= $2)::int new FROM teeko_accounts WHERE consent_version <> 'internal-admin'",[from,this.now()])).rows[0];
+  const profiles=Number((await db.query("SELECT count(*)::int count FROM teeko_profiles p JOIN teeko_accounts a ON a.id=p.account_id WHERE a.consent_version <> 'internal-admin'")).rows[0].count);
+  const usage=(await db.query("SELECT count(DISTINCT u.account_id) FILTER(WHERE u.milliseconds>0)::int active,COALESCE(sum(u.milliseconds),0) AS milliseconds FROM teeko_classroom_usage u JOIN teeko_accounts a ON a.id=u.account_id WHERE a.consent_version <> 'internal-admin' AND u.day_key >= $1 AND u.day_key <= $2",[dayKey,today])).rows[0];
+  const classrooms=(await db.query("SELECT count(*)::int classrooms,count(*) FILTER(WHERE c.status='ended')::int ended FROM teeko_classrooms c JOIN teeko_accounts a ON a.id=c.account_id WHERE a.consent_version <> 'internal-admin' AND c.started_at >= $1 AND c.started_at <= $2",[from,this.now()])).rows[0];
+  const providerRows=(await db.query("SELECT c.preferences->>'provider' AS provider,count(*)::int classrooms,COALESCE(sum(c.elapsed_ms),0) milliseconds FROM teeko_classrooms c JOIN teeko_accounts a ON a.id=c.account_id WHERE a.consent_version <> 'internal-admin' AND c.started_at >= $1 AND c.started_at <= $2 GROUP BY c.preferences->>'provider'",[from,this.now()])).rows;
+  const endings=(await db.query("SELECT c.end_reason AS reason,count(*)::int count FROM teeko_classrooms c JOIN teeko_accounts a ON a.id=c.account_id WHERE a.consent_version <> 'internal-admin' AND c.status='ended' AND c.ended_at >= $1 AND c.ended_at <= $2 GROUP BY c.end_reason ORDER BY c.end_reason",[from,this.now()])).rows;
   return {days,registeredUsers:accounts.registered,profiledUsers:profiles,newUsers:accounts.new,activeUsers:usage.active,classroomCount:classrooms.classrooms,endedCount:classrooms.ended,usageSeconds:Math.floor(Number(usage.milliseconds)/1000),providerUsage:(['qwen','openai'] as const).map(provider=>{const row=providerRows.find(row=>row.provider===provider);return {provider,seconds:Math.floor(Number(row?.milliseconds??0)/1000),classrooms:row?.classrooms??0};}),endings};
  });}
  async users(accountId:string,options:{page:number;pageSize:number}):Promise<AdminUsers>{return this.authorized(accountId,async db=>{
   const {page,pageSize}=options;if(!Number.isInteger(page)||page<0||page>100000||!Number.isInteger(pageSize)||pageSize<1||pageSize>50)fail('INVALID_INPUT','分页参数无效。',400);
-  const total=Number((await db.query('SELECT count(*)::int count FROM teeko_accounts')).rows[0].count);
+  const total=Number((await db.query("SELECT count(*)::int count FROM teeko_accounts WHERE consent_version <> 'internal-admin'")).rows[0].count);
   const rows=(await db.query(`SELECT a.id,a.email,a.created_at,p.name,p.account_id IS NOT NULL AS profile_complete,COALESCE(c.classroom_count,0)::int AS classroom_count,c.last_classroom_at,COALESCE(u.milliseconds,0) AS milliseconds
    FROM teeko_accounts a LEFT JOIN teeko_profiles p ON p.account_id=a.id
    LEFT JOIN LATERAL(SELECT count(*) AS classroom_count,max(started_at) AS last_classroom_at FROM teeko_classrooms WHERE account_id=a.id)c ON true
    LEFT JOIN LATERAL(SELECT sum(milliseconds) AS milliseconds FROM teeko_classroom_usage WHERE account_id=a.id)u ON true
-   ORDER BY a.created_at DESC,a.id LIMIT $1 OFFSET $2`,[pageSize,page*pageSize])).rows;
+   WHERE a.consent_version <> 'internal-admin' ORDER BY a.created_at DESC,a.id LIMIT $1 OFFSET $2`,[pageSize,page*pageSize])).rows;
   return {total,page,pageSize,users:rows.map(row=>({id:row.id,email:row.email,name:row.name??null,createdAt:row.created_at.toISOString(),profileComplete:row.profile_complete,classroomCount:row.classroom_count,usageSeconds:Math.floor(Number(row.milliseconds)/1000),lastClassroomAt:row.last_classroom_at?.toISOString()??null}))};
  });}
 }
