@@ -1,6 +1,8 @@
 import type { ClassroomSnapshot } from './classroom-contract';
 import { PcmVoiceAudio, type PcmVoiceAudioOptions } from './voice-audio';
 import { classroomVoiceFailure, type ClassroomVoiceErrorCode, type ClassroomVoiceFailure } from './classroom-voice-errors';
+import {ClassroomCameraFrames,CLASSROOM_CAMERA_FRAME_BASE64,type ClassroomCameraFrameOwner} from './classroom-camera-frames';
+import {CLASSROOM_VISION_MAX_BASE64,type ClassroomVisionState} from './classroom-vision';
 
 type VoiceState = 'connecting' | 'connected' | 'closed' | 'error';
 type AudioOwner = Pick<PcmVoiceAudio, 'startCapture' | 'playChunk' | 'cancelPlayback' | 'mute' | 'resume' | 'close'>;
@@ -12,6 +14,7 @@ export type ClassroomVoiceClientOptions = {
   onError(message: string): void;
   onFailure?(failure: ClassroomVoiceFailure): void;
   onPlaybackQueue?(milliseconds: number): void;
+  onVisionState?(state:ClassroomVisionState):void;
 };
 export type ClassroomVoiceClientDependencies = {
   media(): Promise<MediaStream>;
@@ -19,6 +22,7 @@ export type ClassroomVoiceClientDependencies = {
   origin(): string;
   audio(options: PcmVoiceAudioOptions): AudioOwner;
   startupMs: number; closeMs: number;
+  frames?():ClassroomCameraFrameOwner;
 };
 
 /** One explicitly started microphone and server-owned connection. No stored audio or credentials. */
@@ -36,6 +40,11 @@ export class ClassroomVoiceClient {
   private startReject: ((reason: Error) => void) | null = null;
   private closeResolve: (() => void) | null = null;
   private closing: Promise<void> | null = null;
+  private visionGeneration=0;
+  private visionActive=false;
+  private visionSequence=0;
+  private frames:ClassroomCameraFrameOwner|null=null;
+  private visionStartup:ReturnType<typeof setTimeout>|null=null;
   constructor(private readonly options: ClassroomVoiceClientOptions, dependencies: Partial<ClassroomVoiceClientDependencies> = {}) {
     this.dependencies = {
       media: () => {
@@ -97,6 +106,12 @@ export class ClassroomVoiceClient {
         if (this.startup) clearTimeout(this.startup); this.startup = null;
         this.options.onState('connected'); this.startResolve?.(); this.startResolve = null; this.startReject = null;
       } catch { if (!this.stopped) this.fail('无法启动麦克风采集，请重新连接。', 'audio_capture_failed'); }
+    } else if(event.type==='vision.state'){
+      if(!this.visionActive||event.generation!==this.visionGeneration||!['off','starting','sharing','error','unavailable'].includes(String(event.status)))return;
+      const status=event.status as ClassroomVisionState['status'];
+      if(status!=='starting'&&this.visionStartup){clearTimeout(this.visionStartup);this.visionStartup=null;}
+      if(status==='off'||status==='error'||status==='unavailable'){this.frames?.stop();this.frames=null;this.visionActive=false;}
+      this.publishVision(status);
     } else if (event.type === 'audio' && this.ready && typeof event.audio === 'string' && event.sampleRate === 24000) this.audio?.playChunk(event.audio, 24000);
     else if (event.type === 'interrupt') this.audio?.cancelPlayback();
     else if (event.type === 'snapshot') {
@@ -109,6 +124,7 @@ export class ClassroomVoiceClient {
     }
   }
   private releaseLocal() {
+    this.stopVision();
     if (this.startup) clearTimeout(this.startup); this.startup = null;
     this.ready = false;
     this.stream?.getTracks().forEach(track => track.stop()); this.stream = null;
@@ -125,6 +141,35 @@ export class ClassroomVoiceClient {
   }
   sendText(text: string): boolean {
     return this.ready && !this.stopped && text.trim().length > 0 && text.length <= 1000 && this.send({ type: 'text', text: text.trim() });
+  }
+  private publishVision(status:ClassroomVisionState['status']){
+    const messages={off:'',starting:'正在开启画面分享…',sharing:'画面分享中',error:'画面分享已停止，请重试；语音课堂可以继续。',unavailable:'当前课堂暂不支持画面分享，可以继续语音上课。'};
+    this.options.onVisionState?.({status,generation:this.visionGeneration,message:messages[status]});
+  }
+  startVision(stream:MediaStream):boolean{
+    if(!this.ready||this.stopped)return false;
+    this.stopVision();this.visionGeneration++;this.visionSequence=0;this.visionActive=true;
+    if(!this.send({type:'vision.start',generation:this.visionGeneration})){this.visionActive=false;this.publishVision('error');return false;}
+    this.publishVision('starting');const generation=this.visionGeneration;
+    const failed=()=>{if(!this.visionActive||generation!==this.visionGeneration)return;this.stopVision();this.publishVision('error');};
+    this.visionStartup=setTimeout(failed,10000);
+    try{
+     const frames=this.dependencies.frames?.()??new ClassroomCameraFrames();this.frames=frames;
+     frames.start(stream,image=>{
+      if(!this.visionActive||this.stopped||generation!==this.visionGeneration)return;
+      if(image.length>CLASSROOM_VISION_MAX_BASE64){failed();return;}
+      // Never let images consume the audio/control queue's 64KB budget.
+      if(!this.socket||this.socket.readyState!==1||this.socket.bufferedAmount>0||image.length>CLASSROOM_CAMERA_FRAME_BASE64)return;
+      try{this.socket.send(JSON.stringify({type:'vision.frame',generation,sequence:++this.visionSequence,image}));}catch{failed();}
+     },failed);
+    }catch{failed();return false;}
+    return this.visionActive;
+  }
+  stopVision():void{
+    if(this.visionStartup)clearTimeout(this.visionStartup);this.visionStartup=null;
+    const active=this.visionActive;this.visionActive=false;this.frames?.stop();this.frames=null;
+    if(active)this.send({type:'vision.stop',generation:this.visionGeneration});
+    this.publishVision('off');
   }
   setMuted(muted: boolean) {
     if (this.stopped) return;

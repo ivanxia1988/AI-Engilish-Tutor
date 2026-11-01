@@ -37,7 +37,7 @@ test('published courses offer one real start action and never request microphone
 
 function fixture(initial:ClassroomSnapshot=snapshot,behavior:{pauseOnStop?:boolean}={}){
  const calls:{path:string,body?:{type?:string;expectedRevision?:number}}[]=[];
- let current=initial, stops=0,starts=0,disposes=0;
+ let current=initial, stops=0,starts=0,disposes=0,visionStarts=0,visionStops=0;
  let callbacks:Parameters<import('../components/product/classroom.tsx').VoiceFactory>[0]|null=null;
  globalThis.fetch=async(input,init)=>{
   const body=typeof init?.body==='string'?JSON.parse(init.body):undefined;calls.push({path:String(input),body});
@@ -47,9 +47,39 @@ function fixture(initial:ClassroomSnapshot=snapshot,behavior:{pauseOnStop?:boole
   if(body?.type==='end')current={...current,status:'ended',revision:current.revision+1,endReason:'manual',endedAt:'2026-11-01T00:01:00Z',elapsedSeconds:60};
   return Response.json({ok:true,classroom:current});
  };
- const voiceFactory:import('../components/product/classroom.tsx').VoiceFactory=options=>{callbacks=options;return{async start(){starts++;current={...current,status:'active',revision:current.revision+1};options.onSnapshot(current);options.onState('connected');},async stop(){stops++;if(behavior.pauseOnStop)current={...current,status:'paused',revision:current.revision+1};options.onState('closed');},dispose(){disposes++;},setMuted(){},sendText(){}};};
- return{calls,voiceFactory,checkMicrophone:async()=>true,get starts(){return starts;},get stops(){return stops;},get disposes(){return disposes;},disconnect(next:ClassroomSnapshot,state:'closed'|'error'='closed'){current=next;callbacks?.onState(state);},emit(next:ClassroomSnapshot){current=next;callbacks?.onSnapshot(next);},fail(next:ClassroomSnapshot){current=next;callbacks?.onFailure?.({code:'provider_error',message:'语音服务返回异常，课堂连接已停止，请重新连接。'});callbacks?.onError('语音服务返回异常，课堂连接已停止，请重新连接。');callbacks?.onState('error');}};
+ const voiceFactory:import('../components/product/classroom.tsx').VoiceFactory=options=>{callbacks=options;return{async start(){starts++;current={...current,status:'active',revision:current.revision+1};options.onSnapshot(current);options.onState('connected');},async stop(){stops++;if(behavior.pauseOnStop)current={...current,status:'paused',revision:current.revision+1};options.onState('closed');},dispose(){disposes++;},setMuted(){},sendText(){},startVision(){visionStarts++;options.onVisionState?.({status:'starting',generation:visionStarts});return true;},stopVision(){visionStops++;options.onVisionState?.({status:'off',generation:visionStarts});}};};
+ return{calls,voiceFactory,checkMicrophone:async()=>true,get visionStarts(){return visionStarts;},get visionStops(){return visionStops;},vision(value:import('../lib/classroom-vision').ClassroomVisionState){callbacks?.onVisionState?.(value);},get starts(){return starts;},get stops(){return stops;},get disposes(){return disposes;},disconnect(next:ClassroomSnapshot,state:'closed'|'error'='closed'){current=next;callbacks?.onState(state);},emit(next:ClassroomSnapshot){current=next;callbacks?.onSnapshot(next);},fail(next:ClassroomSnapshot){current=next;callbacks?.onFailure?.({code:'provider_error',message:'语音服务返回异常，课堂连接已停止，请重新连接。'});callbacks?.onError('语音服务返回异常，课堂连接已停止，请重新连接。');callbacks?.onState('error');}};
 }
+
+test('camera preview never shares automatically; explicit sharing requires connected voice and server acknowledgement',async()=>{
+ const f=fixture();let tracksStopped=0;
+ const track=document.createElement('span') as unknown as MediaStreamTrack;Object.assign(track,{stop(){tracksStopped++;}});
+ const stream={getTracks:()=>[track],getVideoTracks:()=>[track]} as unknown as MediaStream;
+ Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>stream}});
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));fireEvent.click(screen.getByRole('button',{name:'开启摄像头'}));
+ await waitFor(()=>check(screen.getByText('仅自己预览')));assert.equal(f.visionStarts,0);check((screen.getByRole('button',{name:'让老师看见我'}) as HTMLButtonElement).disabled);
+ await startCameraTestLesson();assert.equal(f.visionStarts,0);fireEvent.click(screen.getByRole('button',{name:'让老师看见我'}));assert.equal(f.visionStarts,1);check(!screen.queryByText('画面分享中'));
+ f.vision({status:'sharing',generation:1});await waitFor(()=>check(screen.getByText('画面分享中')));
+ fireEvent.click(screen.getByRole('button',{name:'停止分享'}));await waitFor(()=>check(screen.getByText('仅自己预览')));assert.equal(tracksStopped,0);check(f.visionStops>=1);
+ fireEvent.click(screen.getByRole('button',{name:'让老师看见我'}));fireEvent.click(screen.getByRole('button',{name:'关闭摄像头'}));await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));assert.equal(tracksStopped,1);check(f.visionStops>=2);
+});
+test('pause, end confirmation and disconnection stop image sharing and ignore terminal callbacks',async t=>{
+ for(const cause of ['pause','end','disconnect'] as const)await t.test(cause,async()=>{
+  const f=fixture();const track=document.createElement('span') as unknown as MediaStreamTrack;let tracksStopped=0;Object.assign(track,{stop(){tracksStopped++;}});
+  const stream={getTracks:()=>[track],getVideoTracks:()=>[track]} as unknown as MediaStream;
+  Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>stream}});
+  render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+  await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));fireEvent.click(screen.getByRole('button',{name:'开启摄像头'}));await waitFor(()=>check(screen.getByText('仅自己预览')));await startCameraTestLesson();
+  fireEvent.click(screen.getByRole('button',{name:'让老师看见我'}));f.vision({status:'sharing',generation:1});await waitFor(()=>check(screen.getByText('画面分享中')));
+  if(cause==='pause')fireEvent.click(screen.getByRole('button',{name:'暂停课堂'}));
+  if(cause==='end'){fireEvent.click(screen.getByRole('button',{name:'结束课堂'}));await waitFor(()=>check(screen.getByRole('dialog',{name:'结束确认'})));fireEvent.click(screen.getByRole('button',{name:'结束并保存'}));}
+  if(cause==='disconnect')f.disconnect({...snapshot,status:'paused',revision:8});
+  await waitFor(()=>assert.equal(tracksStopped,1));check(f.visionStops>0);check(!screen.queryByText('画面分享中'));
+  if(cause==='end'){await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));f.vision({status:'sharing',generation:1});check(!screen.queryByText('画面分享中'));}
+  cleanup();
+ });
+});
 
 test('classroom asks for microphone only after the check click and connects on a separate start gesture',async()=>{
  const f=fixture();let checked=0;
@@ -120,7 +150,7 @@ test('an action conflict rereads the authoritative classroom and does not report
 
 test('a pending connection replaces preflight with an accessible cancel action',async()=>{
  const f=fixture();let stopped=0;
- const waitingVoice:import('../components/product/classroom.tsx').VoiceFactory=options=>({start:async()=>{options.onState('connecting');},stop:async()=>{stopped++;options.onState('closed');},dispose(){},setMuted(){},sendText(){}});
+ const waitingVoice:import('../components/product/classroom.tsx').VoiceFactory=options=>({start:async()=>{options.onState('connecting');},stop:async()=>{stopped++;options.onState('closed');},dispose(){},setMuted(){},sendText(){},startVision(){return false;},stopVision(){}});
  render(<Classroom classroomId={snapshot.id} voiceFactory={waitingVoice} checkMicrophone={f.checkMicrophone}/>);
  await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
  check(screen.getByRole('button',{name:'取消连接'}));check(!screen.queryByRole('region',{name:'准备上课'}));

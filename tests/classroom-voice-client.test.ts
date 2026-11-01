@@ -5,7 +5,8 @@ import type { ClassroomSnapshot } from '../lib/classroom-contract';
 import type { PcmVoiceAudioOptions } from '../lib/voice-audio';
 
 function harness() {
-  const sent: Record<string, unknown>[] = [], states: string[] = [], snapshots: ClassroomSnapshot[] = [], errors: string[] = [], failures: unknown[] = [], queues: number[] = [], order: string[] = [];
+  const sent: Record<string, unknown>[] = [], states: string[] = [], snapshots: ClassroomSnapshot[] = [], errors: string[] = [], failures: unknown[] = [], queues: number[] = [], order: string[] = [], vision:import('../lib/classroom-vision').ClassroomVisionState[]=[];
+  let frameCallback:((image:string)=>void)|undefined,framesStarted=0,framesStopped=0;
   let tracksStopped = 0, audioClosed = 0, captures = 0, playback = 0, interrupted = 0, audioOptions: PcmVoiceAudioOptions | undefined;
   const track = { enabled: true, stop() { tracksStopped++; } };
   const stream = { getTracks: () => [track] } as unknown as MediaStream;
@@ -23,11 +24,31 @@ function harness() {
     origin: () => 'http://127.0.0.1:8080',
     audio: options => { audioOptions = options; order.push('audio-gesture'); return { startCapture: async () => { captures++; }, playChunk: () => { playback++; }, cancelPlayback: () => { interrupted++; }, mute() {}, resume: async () => {}, close: () => { audioClosed++; } }; },
     startupMs: 200, closeMs: 10,
+    frames:()=>({start:(_stream,onFrame)=>{framesStarted++;frameCallback=onFrame;},stop:()=>{framesStopped++;}}),
   };
-  const client = new ClassroomVoiceClient({ classroomId: 'classroom-1', provider: 'qwen', onState: state => states.push(state), onSnapshot: snapshot => snapshots.push(snapshot), onLevel() {}, onError: error => errors.push(error), onFailure: failure => failures.push(failure), onPlaybackQueue: ms => queues.push(ms) }, dependencies);
-  return { client, socket, sent, states, snapshots, errors, failures, queues, order, track, dependencies, setMicrophone: (media: () => Promise<MediaStream>) => { microphone = media; }, get options() { return audioOptions!; }, get tracksStopped() { return tracksStopped; }, get audioClosed() { return audioClosed; }, get captures() { return captures; }, get playback() { return playback; }, get interrupted() { return interrupted; }, stream };
+  const client = new ClassroomVoiceClient({ classroomId: 'classroom-1', provider: 'qwen', onState: state => states.push(state), onSnapshot: snapshot => snapshots.push(snapshot), onLevel() {}, onError: error => errors.push(error), onFailure: failure => failures.push(failure), onPlaybackQueue: ms => queues.push(ms),onVisionState:value=>vision.push(value) }, dependencies);
+  return { client, socket, sent, states, snapshots, errors, failures, queues, order, track, dependencies,vision,frame:(image:string)=>frameCallback?.(image),get framesStarted(){return framesStarted;},get framesStopped(){return framesStopped;},setMicrophone: (media: () => Promise<MediaStream>) => { microphone = media; }, get options() { return audioOptions!; }, get tracksStopped() { return tracksStopped; }, get audioClosed() { return audioClosed; }, get captures() { return captures; }, get playback() { return playback; }, get interrupted() { return interrupted; }, stream };
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+test('camera sharing is explicit, generation scoped and never claims understanding before server state',async()=>{
+ const h=harness();assert.equal(h.client.startVision(h.stream),false);const pending=h.client.start();await tick();h.socket.emit({type:'ready',inputSampleRate:16000,outputSampleRate:24000});await pending;
+ assert.equal(h.framesStarted,0);assert.equal(h.client.startVision(h.stream),true);assert.equal(h.vision.at(-1)?.status,'starting');
+ const generation=h.sent.find(event=>event.type==='vision.start')!.generation;h.frame('/9j/4A==');assert.equal(h.vision.at(-1)?.status,'starting');
+ assert.deepEqual(h.sent.find(event=>event.type==='vision.frame'),{type:'vision.frame',generation,sequence:1,image:'/9j/4A=='});
+ h.socket.emit({type:'vision.state',generation,status:'sharing'});assert.equal(h.vision.at(-1)?.status,'sharing');
+ h.client.stopVision();h.frame('/9j/4A==');assert.equal(h.vision.at(-1)?.status,'off');h.socket.emit({type:'vision.state',generation,status:'sharing'});assert.equal(h.vision.at(-1)?.status,'off');
+ h.client.startVision(h.stream);h.socket.emit({type:'vision.state',generation,status:'sharing'});assert.equal(h.vision.at(-1)?.status,'starting');await h.client.stop();assert.equal(h.vision.at(-1)?.status,'off');assert.equal(h.audioClosed,1);
+});
+test('visual backpressure and unsafe server error stop only images, preserving voice',async()=>{
+ const h=harness(),pending=h.client.start();await tick();h.socket.emit({type:'ready',inputSampleRate:16000,outputSampleRate:24000});await pending;
+ h.client.startVision(h.stream);h.socket.bufferedAmount=1;h.frame('/9j/4A==');assert(!h.sent.some(event=>event.type==='vision.frame'));assert.equal(h.audioClosed,0);assert.equal(h.states.at(-1),'connected');
+ h.socket.bufferedAmount=0;h.client.stopVision();h.client.startVision(h.stream);const generation=h.sent.filter(event=>event.type==='vision.start').at(-1)!.generation;
+ h.socket.emit({type:'vision.state',generation,status:'error',message:'PRIVATE_UPSTREAM_ERROR'});assert.equal(h.vision.at(-1)?.status,'error');assert(!JSON.stringify(h.vision).includes('PRIVATE'));assert.equal(h.client.sendText('still talking'),true);h.client.dispose();
+});
+test('missing visual acknowledgement times out without closing the voice connection',async t=>{
+ const h=harness(),pending=h.client.start();await tick();h.socket.emit({type:'ready',inputSampleRate:16000,outputSampleRate:24000});await pending;
+ t.mock.timers.enable({apis:['setTimeout']});try{h.client.startVision(h.stream);t.mock.timers.tick(15000);assert.equal(h.vision.at(-1)?.status,'error');assert.equal(h.audioClosed,0);assert.equal(h.client.sendText('voice continues'),true);}finally{h.client.dispose();t.mock.timers.reset();}
+});
 
 test('microphone PCM starts only after server-ready and actual audio drives playback', async () => {
   const h = harness(), starting = h.client.start(); await tick();
