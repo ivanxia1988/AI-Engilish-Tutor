@@ -17,7 +17,7 @@ const waitFor = async (condition: () => boolean) => {
   const end = Date.now() + 2000;
   while (!condition()) { if (Date.now() >= end) throw new Error('Expected socket event did not arrive.'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
-async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; refreshOnTool?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string; observe?:ClassroomVisionObserver; noAutoPong?:boolean; connectionProbeMs?:number; connectionProbeTimeoutMs?:number } = {}) {
+async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { model?:string; teachingGuidance?:string;remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; refreshOnTool?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string; observe?:ClassroomVisionObserver; noAutoPong?:boolean; connectionProbeMs?:number; connectionProbeTimeoutMs?:number } = {}) {
   const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp, autoPong: !extra.noAutoPong });
   const sent: Record<string, unknown>[] = [], downstream: Record<string, unknown>[] = [], transcripts: unknown[] = [], tools: unknown[] = [];
   let upstream: WebSocket | undefined, opened = 0, released = 0, heartbeatAllowed = true, current = snapshot, resolveTool: (() => void) | undefined, resolveTranscript: (() => void) | undefined, persistedStarts = 0;
@@ -40,11 +40,11 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
   const vendorAddress = upstreamHttp.address(); assert(vendorAddress && typeof vendorAddress !== 'string');
   const app = createServer();
   const lease: VoiceLease = {
-    id, epoch: 1, provider, instructions: 'Current verified task: find apple.', initialCue: 'Can you find the apple?', remainingMs: extra.remainingMs ?? 60000, snapshot, observe:extra.observe, ...(extra.voice ? { voice: extra.voice } : {}),
+    id, epoch: 1, provider, instructions: 'Current verified task: find apple.', initialCue: 'Can you find the apple?', remainingMs: extra.remainingMs ?? 60000, snapshot, observe:extra.observe,...(extra.model?{model:extra.model}:{}),...(extra.teachingGuidance?{teachingGuidance:extra.teachingGuidance}:{}), ...(extra.voice ? { voice: extra.voice } : {}),
     async heartbeat() {
       heartbeatCalls++; const captured = current;
       if (delayHeartbeat) { delayHeartbeat = false; await new Promise<void>(resolve => { releaseHeartbeat = resolve; }); }
-      return heartbeatAllowed ? { snapshot: captured, instructions: extra.instructions ?? captured.feedback?.message ?? 'Current verified task: say apple.' } : null;
+      return heartbeatAllowed ? { snapshot: captured, instructions: extra.instructions ?? captured.feedback?.message ?? 'Current verified task: say apple.',...(extra.teachingGuidance?{teachingGuidance:extra.teachingGuidance}:{}) } : null;
     },
     async started(sessionId) { assert.equal(sessionId, 'voice_session'); if (extra.startedFails) throw new Error('fixture persistence unavailable'); persistedStarts++; },
     async transcript(event) {
@@ -770,4 +770,8 @@ test('excess measurement pings consume the existing bounded message allowance',a
   await waitFor(()=>h.released===1);
   assert(h.downstream.some(event=>event.type==='error'&&event.code==='input_rate_limited'));
  }finally{await h.close();}
+});
+
+test('published model selection is applied by the server lease rather than a browser parameter',async()=>{
+ const h=await harness('openai',{model:'gpt-live-1-synthetic',teachingGuidance:'effectiveLevel=starter; hintLimit=2'});try{const socket=h.connect();await once(socket,'open');await waitFor(()=>h.sent.some(event=>event.type==='session.start'));const start=h.sent.find(event=>event.type==='session.start')!;assert.equal((start.session as {model:string}).model,'gpt-live-1-synthetic');h.advance();await refreshClassroom(id);await waitFor(()=>h.sent.some(event=>event.type==='session.thinking.append'&&JSON.stringify(event).includes('effectiveLevel=starter')));socket.close();}finally{await h.close();}
 });

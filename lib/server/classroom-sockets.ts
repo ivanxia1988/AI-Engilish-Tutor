@@ -17,8 +17,8 @@ import {CLASSROOM_VISION_MAX_BASE64,type ClassroomVisionObserver} from '../class
 
 export type VoiceLease = {
   id: string; epoch: number; provider: 'qwen' | 'openai'; instructions: string; initialCue: string;
-  remainingMs: number; snapshot: ClassroomSnapshot; voice?: string; observe?:ClassroomVisionObserver;
-  heartbeat(): Promise<{ snapshot: ClassroomSnapshot; instructions: string } | null>;
+  remainingMs: number; snapshot: ClassroomSnapshot; voice?: string; model?:string; teachingGuidance?:string;observe?:ClassroomVisionObserver;
+  heartbeat(): Promise<{ snapshot: ClassroomSnapshot; instructions: string;teachingGuidance?:string } | null>;
   started?(sessionId: string): Promise<void>;
   transcript(event: { role: 'child' | 'teacher'; text: string; final: boolean; itemId?: string; contextKey: string; source: 'speech' | 'typed' }): Promise<void>;
   tool(name: string, args: unknown): Promise<{ output: unknown; snapshot: ClassroomSnapshot }>;
@@ -94,7 +94,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       lease = await timed(opening, 8000);
       if (socket.destroyed || closing) { await lease.closed(); return; }
       const defaults = (options.config ?? configFromEnvironment)(lease.provider);
-      const config = { ...defaults, ...(lease.voice ? { voice: lease.voice } : {}) };
+      const config = { ...defaults, ...(lease.voice ? { voice: lease.voice } : {}),...(lease.model?{model:lease.model}:{}) };
       if (!config.key || (lease.provider === 'openai' && !config.childDataReady) || !Number.isFinite(lease.remainingMs) || lease.remainingMs <= 0) throw new Error('Voice configuration unavailable.');
       const endpoint = lease.provider === 'qwen'
         ? qwenEndpoint({ workspaceId: config.workspaceId ?? '', model: config.model, region: config.region as QwenRegion, transport: 'websocket' })
@@ -285,7 +285,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const speak = (cue: string) => {
       if (protocol) enqueueQwen({ type: 'speak', text: cue }); else append('commentary', cue);
     };
-    const context = (snapshot: ClassroomSnapshot, instructions: string, cue: boolean) => {
+    const context = (snapshot: ClassroomSnapshot, instructions: string, cue: boolean,teachingGuidance?:string) => {
       if (stopped || snapshot.revision < revision) return;
       const taskChanged = snapshot.stepIndex !== stepIndex, feedbackChanged = snapshot.feedback?.id !== feedbackId;
       if (taskChanged) { resetUtterance(); qwenOutputAllowed = false; if (protocol) clearPlayback(); else gateGptOutput(); }
@@ -300,6 +300,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         task: step ? { id: step.id, kind: step.kind, prompt: step.english } : null,
         objects: snapshot.course.pages.find(page => page.id === step?.pageId)?.objects.map(object => ({ id: object.id, label: object.label })),
         teacherObjectIds: snapshot.teacherObjectIds,
+        ...(teachingGuidance?{teachingGuidance:teachingGuidance.slice(0,2400)}:{}),
         feedback: snapshot.feedback ? { kind: snapshot.feedback.kind, message: snapshot.feedback.message.slice(0, 240) } : null,
       })));
       // Native same-task tools own their continuation; the synchronous refresh
@@ -318,7 +319,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         const active = await timed(lease.heartbeat(), 5000);
         if (!active) { void stop('lease_lost'); return; }
         if (stopped) return;
-        context(active.snapshot, active.instructions, false);
+        context(active.snapshot, active.instructions, false,active.teachingGuidance);
         const output = active.snapshot.revision > result.snapshot.revision
           ? { status: 'unavailable', english: 'The activity changed. Discard this old result and use the current task.' }
           : result.output;
@@ -539,7 +540,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
             try {
               const heartbeat = await timed(lease.heartbeat(), 5000);
               if (!heartbeat) { void stop('lease_lost'); return; }
-              if (ready && heartbeat.snapshot.revision !== revision) context(heartbeat.snapshot, heartbeat.instructions, true);
+              if (ready && heartbeat.snapshot.revision !== revision) context(heartbeat.snapshot, heartbeat.instructions, true,heartbeat.teachingGuidance);
             } catch { void stop('lease_check_failed'); return; }
           }
         } finally { refreshPromise = undefined; }

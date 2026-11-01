@@ -15,7 +15,7 @@ async function fixture(t: TestContext) {
   await admin.query(`CREATE SCHEMA ${schema}`);
   const pool = new Pool({ connectionString: database, options: `-c search_path=${schema},public`, max:8 });
   t.after(async () => { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); });
-  for (const file of ['0001_accounts.sql','0002_classrooms.sql']) await pool.query(await readFile(new URL(`../db/migrations/${file}`,import.meta.url),'utf8'));
+  for (const file of ['0001_accounts.sql','0002_classrooms.sql','0003_teacher_agents.sql']) await pool.query(await readFile(new URL(`../db/migrations/${file}`,import.meta.url),'utf8'));
   const { ClassroomService } = await import('../lib/server/classroom-service.ts');
   const { publishTrialCourses } = await import('../lib/server/course-catalog.ts');
   await publishTrialCourses(pool);
