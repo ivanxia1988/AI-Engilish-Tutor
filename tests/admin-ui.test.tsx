@@ -3,6 +3,7 @@ import test,{after,afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {DEFAULT_TEACHER_AGENT,DEFAULT_TEACHER_MODELS,type TeacherAgent,type TeacherModel} from '../lib/teacher-agent';
+import {configResponse} from '../components/admin/admin-request';
 const dom=new JSDOM('<!doctype html><html><body></body></html>',{url:'http://localhost/admin'});
 for(const key of ['window','self','document','HTMLElement','HTMLInputElement','Node','Event','MouseEvent','MutationObserver','getComputedStyle','navigator'])Object.defineProperty(globalThis,key,{value:(dom.window as unknown as Record<string,unknown>)[key],configurable:true});
 const {render,screen,fireEvent,waitFor,cleanup,act}=await import('@testing-library/react');
@@ -29,6 +30,7 @@ function fixture(options:{failWrite?:boolean;unauthorized?:boolean;invalidBindin
   if(url.endsWith(`/agents/${agentId}`)){const input=structuredClone(body);delete input.expectedRevision;agent={...input,id:agentId,revision:2,createdAt:date,updatedAt:date};return Response.json({ok:true,agent});}
   if(url.endsWith('/agents'))return Response.json({ok:true,agent:{...body,id:'30000000-0000-4000-8000-000000000002',revision:1,createdAt:date,updatedAt:date}});
   if(url.endsWith('/models'))return Response.json({ok:true,model:{...body,id:'20000000-0000-4000-8000-000000000099',revision:1,createdAt:date,updatedAt:date}});
+  if(url.endsWith('/credentials'))return Response.json({ok:true,credential:{provider:'qwen',source:'environment',configured:true,revision:0,updatedAt:null}});
   throw new Error('Unexpected fixture request');
  };
  return{calls};
@@ -48,6 +50,33 @@ test('model creation sends model settings only and a failed save preserves form 
  await clickAsync(screen.getByRole('button',{name:'保存模型'}));await waitFor(()=>assert(screen.getByRole('alert').textContent?.includes('暂时无法保存')));
  assert.equal((screen.getByLabelText('配置名称') as HTMLInputElement).value,'第二个通义模型');
  const call=f.calls.find(item=>item.url.endsWith('/models')&&item.method==='POST');assert(call);assert(!JSON.stringify(call.body).match(/apiKey|endpoint|secret/i));
+});
+test('model settings and credentials never save concurrently or bind to an unsaved provider',async()=>{
+ const f=fixture(),original=globalThis.fetch;let finish:((value:Response)=>void)|undefined;
+ globalThis.fetch=async(input,init)=>String(input).endsWith('/credentials')&&init?.body?new Promise<Response>(resolve=>{finish=resolve;}):original(input,init);
+ render(<AdminConsole/>);await waitFor(()=>assert(screen.getByText('累计注册用户')));fireEvent.click(screen.getByRole('button',{name:'模型配置'}));
+ await waitFor(()=>assert(screen.getByText('使用环境默认密钥')));
+ fireEvent.change(screen.getByLabelText('API Key'),{target:{value:'synthetic-model-key'}});fireEvent.change(screen.getByLabelText('工作空间 ID'),{target:{value:'fixture-space'}});
+ fireEvent.click(screen.getByRole('button',{name:'保存密钥'}));assert(finish);assert(screen.getByLabelText('服务').matches(':disabled'));
+ fireEvent.submit(screen.getByLabelText('服务').closest('form')!);assert.equal(f.calls.filter(call=>call.method==='PATCH'&&call.url.includes('/models/')).length,0);
+ await act(async()=>{finish!(Response.json({ok:true,credential:{provider:'qwen',source:'model',configured:true,revision:1,updatedAt:date}}));});
+ await waitFor(()=>assert(!screen.getByLabelText('服务').matches(':disabled')));
+ await waitFor(()=>assert.equal(f.calls.filter(call=>call.url.endsWith('/config')).length,2));assert.equal((screen.getByLabelText('配置名称') as HTMLInputElement).value,'通义实时课堂');
+ fireEvent.change(screen.getByLabelText('服务'),{target:{value:'openai'}});assert(screen.getByLabelText('API Key').matches(':disabled'));assert(screen.getByText('请先保存模型配置，再设置密钥。'));
+ fireEvent.click(screen.getByRole('button',{name:'新增模型'}));await clickAsync(screen.getByRole('button',{name:'放弃更改'}));assert(screen.getByText('先保存模型，再配置密钥。'));
+});
+test('saving a database key refreshes provider availability without reloading the model editor',async()=>{
+ fixture();const original=globalThis.fetch;let configured=false;
+ globalThis.fetch=async(input,init)=>{
+  const url=String(input);
+  if(url.endsWith('/credentials')){if(init?.body)configured=true;return Response.json({ok:true,credential:{provider:'qwen',source:configured?'model':'missing',configured,revision:configured?1:0,updatedAt:null}});}
+  const response=await original(input,init);if(!url.endsWith('/config'))return response;const body=configResponse.parse(await response.json());return Response.json({...body,providers:{...body.providers,qwen:configured}});
+ };
+ render(<AdminConsole/>);await waitFor(()=>assert(screen.getByText('累计注册用户')));await openAgents();fireEvent.click(screen.getByRole('tab',{name:'预览与试教'}));assert((screen.getByRole('button',{name:'开始文字试教'}) as HTMLButtonElement).disabled);
+ fireEvent.click(screen.getByRole('button',{name:'模型配置'}));await waitFor(()=>assert(screen.getByText('尚未配置密钥')));
+ fireEvent.change(screen.getByLabelText('API Key'),{target:{value:'synthetic-database-key'}});fireEvent.change(screen.getByLabelText('工作空间 ID'),{target:{value:'fixture-space'}});await clickAsync(screen.getByRole('button',{name:'保存密钥'}));await waitFor(()=>assert(screen.getByText('密钥已保存，后续请求生效。')));
+ assert.equal((screen.getByLabelText('配置名称') as HTMLInputElement).value,'通义实时课堂');
+ await openAgents();fireEvent.click(screen.getByRole('tab',{name:'预览与试教'}));assert(!(screen.getByRole('button',{name:'开始文字试教'}) as HTMLButtonElement).disabled);
 });
 test('agent publishing requires a saved draft and an explicit confirmation',async()=>{
  const f=fixture();render(<AdminConsole/>);await openAgents();

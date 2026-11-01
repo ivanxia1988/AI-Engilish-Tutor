@@ -82,6 +82,14 @@
 .ta-editor-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-height:74px;padding:14px 20px;border-top:1px solid #e4dccd;background:#fffdf8;flex-shrink:0}
 .ta-editor-actions>span{margin-right:auto;font-size:10px;color:#8b9785}
 .ta-editor-actions>button{font-size:12px;white-space:nowrap}
+.ta-model-credentials{border-top:1px solid #e5dece;padding-top:20px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.ta-model-credentials>header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.ta-model-credentials h3{font-size:14px;font-weight:600;color:#293850}
+.ta-model-credentials>fieldset{display:flex;flex-direction:column;gap:16px}
+.ta-model-credentials .ta-form-grid{align-items:end}
+.ta-credential-actions{display:flex;gap:10px;flex-wrap:wrap}
+.ta-model-credentials>.ta-error,.ta-model-credentials>.ta-notice{margin:0;padding:10px 12px;border-radius:7px;font-size:12px}
+.ta-model-credentials>.ta-notice{background:#edf6ef;color:#236d58}
 .ta-form-stack{display:flex;flex-direction:column;gap:20px}
 .ta-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 20px}
 .ta-app .ta-checkbox{flex-direction:row;align-items:center;gap:10px;font-weight:450;min-height:40px}
