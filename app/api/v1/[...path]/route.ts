@@ -1,9 +1,11 @@
 import { handleAccountRequest } from '../../../../lib/server/account-runtime';
 import { handleClassroomRequest } from '../../../../lib/server/classroom-runtime';
 import { isClassroomApi } from '../../../../lib/server/classroom-http';
+import {isAdminApi} from '../../../../lib/server/admin-http';
+import {handleAdminRequest} from '../../../../lib/server/admin-runtime';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-const handle=(request:Request)=>isClassroomApi(new URL(request.url).pathname)?handleClassroomRequest(request):handleAccountRequest(request);
+const handle=(request:Request)=>{const path=new URL(request.url).pathname;return isAdminApi(path)?handleAdminRequest(request):isClassroomApi(path)?handleClassroomRequest(request):handleAccountRequest(request);};
 export const GET = handle;
 export const POST = handle;
 export const PATCH = handle;

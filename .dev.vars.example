@@ -28,3 +28,6 @@ DOUBAO_REALTIME_VOICE=zh_female_vv_jupiter_bigtts
 ZHIPU_API_KEY=
 GLM_REALTIME_MODEL=glm-realtime-flash
 GLM_REALTIME_VOICE=tongtong
+# Optional dedicated administrator origin; omit locally to use APP_ORIGIN.
+# Production example: https://admin.teeko.app
+ADMIN_ORIGIN=

@@ -5,6 +5,7 @@
 - [完整页面流](page-flow.md)：00公开分享长页、邀请码与账号子状态、新老用户、课堂恢复/结束、异步报告和设置。
 - [产品与架构倾向](../product/current-product-direction.md)：区分已决定、实现倾向和待验证。
 - [最新落地页说明](pages/landing.md)与[课堂说明](pages/classroom.md)：用户最新审阅优先于原始图稿。
+- [独立管理后台](pages/admin.md)：教师智能体、模型配置、版本发布、专用登录和真实统计；规划admin.teeko.app。
 
 ## 当前状态
 

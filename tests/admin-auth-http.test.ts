@@ -20,3 +20,10 @@ test('admin authentication rejects wrong origins, oversized bodies, duplicate co
  assert.equal((await post('/login',{username:'admin',password:'fixture-password',role:'admin'})).status,400);
  assert.equal(adminSessionCookie(new Request(origin,{headers:{cookie:`teeko_admin_session=${token}; teeko_admin_session=${token}`}})),undefined);
 });
+
+test('admin authentication checks the external Host when Next uses an internal request URL', async () => {
+ const handler=createAdminAuthHandler({origin,auth:{login:async()=>({sessionToken:token,user:{id:'operator',username:'admin'}}),session:async()=>null,logout:async()=>{}}});
+ const post=(url:string,host:string)=>handler(new Request(url,{method:'POST',headers:{host,origin,'content-type':'application/json'},body:JSON.stringify({username:'admin',password:'fixture-password'})}));
+ assert.equal((await post('http://0.0.0.0:8080/api/v1/admin/auth/login','admin.teeko.app')).status,200);
+ assert.equal((await post(`${origin}/api/v1/admin/auth/login`,'teeko.app')).status,403);
+});

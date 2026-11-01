@@ -6,6 +6,9 @@ import { attachClassroomSockets } from '../lib/server/classroom-sockets.ts';
 export async function startNodeClassroomServer(options = {}) {
   const origin = options.origin ?? process.env.APP_ORIGIN;
   if (!origin || new URL(origin).origin !== origin) throw new Error('A valid APP_ORIGIN origin is required.');
+  const administratorOrigin = options.adminOrigin ?? process.env.ADMIN_ORIGIN;
+  if (administratorOrigin && new URL(administratorOrigin).origin !== administratorOrigin) throw new Error('A valid ADMIN_ORIGIN origin is required.');
+  const administratorHost = administratorOrigin ? new URL(administratorOrigin).host : undefined;
   const port = options.port ?? Number(process.env.PORT || '8080');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid server port.');
   const hostname = options.hostname ?? '0.0.0.0';
@@ -13,7 +16,15 @@ export async function startNodeClassroomServer(options = {}) {
   await app.prepare();
   const handler = app.getRequestHandler();
   const server = createServer({ maxHeaderSize: 16384 }, (request, response) => {
-    void Promise.resolve(handler(request, response)).catch(() => {
+    if (administratorOrigin && administratorOrigin !== origin && request.headers.host === administratorHost) {
+      let pathname;
+      try { pathname = new URL(request.url ?? '/', administratorOrigin).pathname; }
+      catch { response.writeHead(400); response.end('Invalid request target.'); return; }
+      if (pathname === '/') {
+        response.writeHead(307, { Location: '/admin', 'Cache-Control': 'no-store' }); response.end(); return;
+      }
+    }
+    void Promise.resolve().then(() => handler(request, response)).catch(() => {
       if (!response.headersSent) { response.statusCode = 500; response.end('The request could not be completed.'); }
       else response.destroy();
     });

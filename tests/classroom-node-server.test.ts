@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { startNodeClassroomServer } from '../scripts/serve-node.mjs';
-import { createServer } from 'node:http';
+import { createServer,request as requestHttp } from 'node:http';
 import { once } from 'node:events';
 import WebSocket, { WebSocketServer } from 'ws';
 import type { ClassroomSnapshot } from '../lib/classroom-contract';
@@ -23,6 +23,34 @@ test('Node entry forwards HTTP through Next, listens on requested port and close
 
 test('Node startup validates origin before creating an application or listener', async () => {
   await assert.rejects(startNodeClassroomServer({ port: 0, origin: 'https://teeko.app/path' }), /origin/i);
+});
+test('dedicated admin hostname root redirects to the guarded admin site without replacing the product homepage',async()=>{
+ const instance=await startNodeClassroomServer({port:0,hostname:'127.0.0.1',origin:'https://teeko.app',adminOrigin:'https://admin.teeko.app',app:{async prepare(){},async close(){},getRequestHandler(){return async(_request:unknown,response:{end(value:string):void})=>response.end('product-page');}},open:async()=>{throw new Error('No media expected');}});
+ try{const address=instance.server.address();assert(address&&typeof address!=='string');
+  const root=`http://127.0.0.1:${address.port}/`;
+  const get=(host:string)=>new Promise<{status:number;location:string|undefined;body:string}>((resolve,reject)=>{const req=requestHttp(root,{headers:{host}},response=>{let body='';response.on('data',chunk=>{body+=chunk;});response.on('end',()=>resolve({status:response.statusCode??0,location:response.headers.location,body}));});req.on('error',reject);req.end();});
+  const admin=await get('admin.teeko.app');assert.equal(admin.status,307);assert.equal(admin.location,'/admin');
+  const product=await get('teeko.app');assert.equal(product.status,200);assert.equal(product.body,'product-page');
+ }finally{await instance.close();}
+});
+
+test('malformed admin request targets return 400 and leave the Node server available', async () => {
+  const instance = await startNodeClassroomServer({
+    port: 0, hostname: '127.0.0.1', origin: 'https://teeko.app', adminOrigin: 'https://admin.teeko.app',
+    app: { async prepare() {}, async close() {}, getRequestHandler() { return async (_request: unknown, response: { end(value: string): void }) => response.end('healthy'); } },
+    open: async () => { throw new Error('No media expected'); },
+  });
+  try {
+    const address = instance.server.address(); assert(address && typeof address !== 'string');
+    const response = await new Promise<number>((resolve, reject) => {
+      const request = requestHttp({ hostname: '127.0.0.1', port: address.port, path: 'http://[', headers: { host: 'admin.teeko.app' } }, result => {
+        result.resume(); result.on('end', () => resolve(result.statusCode ?? 0));
+      });
+      request.on('error', reject); request.end();
+    });
+    assert.equal(response, 400);
+    assert.equal(await (await fetch(`http://127.0.0.1:${address.port}/`)).text(), 'healthy');
+  } finally { await instance.close(); }
 });
 
 test('HTTP-first Next upgrade installation cannot close the separate application voice namespace', async () => {

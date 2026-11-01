@@ -42,3 +42,21 @@
 - [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)：Responses使用text.format JSON schema。
 - [通义结构化输出](https://help.aliyun.com/en/model-studio/qwen-structured-output)：Chat的json_object需提示包含JSON，应用仍校验结构；qwen-plus按非思考模式配置。
 - [通义兼容Chat](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions)：固定官方地域/工作空间域名，旧域仍支持，不允许后台填任意请求地址。
+
+## 实施结果与校正
+
+- 已按独立用户名/密码管理站实现，覆盖早期计划中“使用学生登录再授予管理角色”的入口想法。0003/0004迁移已应用本地验收库；创建指定admin运营身份，只存独立密码哈希，不写入源码或文档。主站8080、后台8082；规划admin.teeko.app尚未绑定。
+- 三个独立worktree完成存储、界面和教学运行时，经只读审阅逐提交集成。根分支完成HTTP、SSR、运维CLI、Host/Origin和正式入口；不复制私密环境到worktree。
+- 修正实际Node联调发现的内部request.url与外部Host差异；保留Host、Origin和管理会话校验。畸形后台request-target回400，测试确认后续健康请求仍可用。
+- 实测发现通义JSON模式需收到完整schema；保留严格本地校验。开放表达去除旧固定答案列表；短句个人兴趣不推断成带物品，发散配置/实际轮数进入判断模型。实时老师收到的开放题也不再附穷尽答案。
+- 已验证42项隔离PG测试：发布不可变、revision竞争、旧课堂冻结、语义网络不持锁、迟到/新话轮/撤权、独立管理会话、真实统计排除内部运营身份；测试schema清理。
+- 实际编译后的Node烟测通过：匿名SSR/API、学生cookie拒绝、专用登录、真实配置/统计、创建/保存/预览/发布/回退、管理退出后学生会话仍有效。fixture仅loopback测试schema，不改真实学生或线上数据。
+- 两家真实文字样例回归：自选三明治=correct，短句喜欢恐龙=conversation，认物苹果=correct；合成文字不是儿童麦克风/家庭整课验收。回归脚本显式开启才联网。
+- 独立只读复核未发现剩余权限/评分阻断；浏览器真实页面与自动测试分别记录。教材上传/解析、完整报告、云端部署与正式子域名仍未实施。
+
+### 最终本地验证
+
+- `npm test`：513项，491通过、22项显式集成/联网检查默认跳过，无失败。隔离PG42项及实际Node管理员冒烟另行显式运行通过，不能把默认跳过写成通过。
+- `npm run typecheck`、`npm run build:node`和本批定向ESLint通过；文档本地链接与`git diff --check`通过。
+- 实际Chromium界面：指定管理员登录→主提示词→完整预览→通义自选答案试教→GPT题外兴趣试教→退出；两个实际API均200、判断与场景一致，页面无JS错误。1440×900、1194×834、1024×768无整体溢出，策略内容内部滚动；截图仅本机`/tmp/teeko-admin-live-*-policy.png`，未提交生成物。
+- 主站8080根路径200，主站`/admin`跳独立后台，后台8082根路径进`/admin`，匿名管理API401；真实账号/邀请码/课堂保留。正式域名、云端发布和儿童整课教学效果尚未验收。

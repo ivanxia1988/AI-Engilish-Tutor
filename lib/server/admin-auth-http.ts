@@ -1,6 +1,7 @@
 import {z} from 'zod';
 import {accountResponse,boundedJson} from './account-http';
 import {AdminAuthError,type AdminAuthService} from './admin-auth';
+import {hasAdminHost} from './admin-origin';
 type Auth=Pick<AdminAuthService,'login'|'session'|'logout'>;
 const loginSchema=z.object({username:z.string().trim().min(1).max(32),password:z.string().min(1).max(64)}).strict();
 export function adminSessionCookie(request:Request):string|undefined{
@@ -11,7 +12,7 @@ export function createAdminAuthHandler({origin,auth}:{origin:string;auth:Auth}){
  try{
   const url=new URL(request.url),path=url.pathname.replace(/^\/api\/v1\/admin\/auth/,'');
   if(!['/state','/login','/logout'].includes(path))return accountResponse({ok:false,error:{code:'NOT_FOUND',message:'管理登录接口不存在。'}},404);
-  if(url.origin!==origin)throw new AdminAuthError('ORIGIN','管理后台地址不正确。',403);
+  if(!hasAdminHost(request,origin))throw new AdminAuthError('ORIGIN','管理后台地址不正确。',403);
   const token=adminSessionCookie(request);
   if(request.method==='GET'&&path==='/state')return accountResponse({ok:true,user:await auth.session(token)});
   if(request.method!=='POST'||path==='/state')throw new AdminAuthError('METHOD','不支持此请求方式。',405);

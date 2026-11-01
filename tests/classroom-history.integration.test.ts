@@ -13,7 +13,7 @@ test('recent classroom summaries are bounded, newest first, persisted and owned 
  await admin.query(`CREATE SCHEMA ${schema}`);
  const pool=new Pool({connectionString:database,options:`-c search_path=${schema},public`});
  t.after(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();});
- for(const file of ['0001_accounts.sql','0002_classrooms.sql'])await pool.query(await readFile(new URL(`../db/migrations/${file}`,import.meta.url),'utf8'));
+ for(const file of ['0001_accounts.sql','0002_classrooms.sql','0003_teacher_agents.sql'])await pool.query(await readFile(new URL(`../db/migrations/${file}`,import.meta.url),'utf8'));
  await publishTrialCourses(pool);
  const owner=randomUUID(),other=randomUUID();
  for(const id of [owner,other]){
