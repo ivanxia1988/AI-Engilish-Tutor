@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import Link from 'next/link';
-import { ArrowRight, BookOpen, Check, Mic, MousePointer2, Pause, Pencil, PhoneOff, Play, RotateCcw, Undo2, Volume2, VolumeX, Wifi } from 'lucide-react';
+import { ArrowRight, BookOpen, Check, ChevronDown, Mic, MousePointer2, Pause, Pencil, PhoneOff, Play, RotateCcw, Undo2, Volume2, VolumeX, Wifi } from 'lucide-react';
 import type { ClassroomAction, ClassroomSnapshot } from '../../lib/classroom-contract';
+import {buildClassroomSummary} from '../../lib/classroom-summary';
 import type { Point } from '../../lib/types';
 import { normalizedPoint, pointsBox, resolveSelection } from '../../lib/classroom';
 import { PrototypeSounds } from '../../lib/prototype-sounds';
@@ -50,14 +51,29 @@ export async function checkClassroomMicrophone(onLevel:(level:number)=>void,sign
 }
 const time=(seconds:number)=>`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`;
 
+function ClassroomRecap({state}:{state:ClassroomSnapshot}){
+ const summary=buildClassroomSummary(state);
+ return <main className="tk-product tk-real-summary">
+  <header className="tk-product-header"><Link href="/courses" className="tk-wordmark">Tee<span>ko</span></Link><span>本次小结</span></header>
+  <section><div className="tk-real-summary-hero"><img src="/prototype-assets/pose-handoff.svg" alt="Teeko"/><div><h1>{summary.headline}</h1><p>{state.course.title}</p><p className="tk-summary-note">{summary.description}</p></div></div>
+   <div className="tk-real-summary-stats"><div><strong>{time(state.elapsedSeconds)}</strong><span>本次课堂时长</span></div><div><strong>{summary.completed.filter(item=>item.status==='independent').length}</strong><span>独立完成</span></div><div><strong>{summary.completed.filter(item=>item.status==='assisted').length}</strong><span>提示后完成</span></div></div>
+   <div className="tk-real-summary-details"><section aria-label="本次完成"><h2>本次完成</h2>{summary.completed.length?<ul tabIndex={0} aria-label="完成记录">{summary.completed.map(item=><li key={item.stepId}><Check size={16}/><span>{item.label}</span><small>{item.status==='assisted'?'提示后完成':'独立完成'}</small></li>)}</ul>:<p>还没有完成的答题记录。</p>}</section>
+    <section aria-label="再练一点"><h2>再练一点</h2>{summary.practice.length?<ul tabIndex={0} aria-label="再练建议">{summary.practice.map(item=><li key={item.stepId}><div><strong>{item.label}</strong><p>{item.reason}</p></div></li>)}</ul>:<p>{summary.empty?'先从本课的小问题开始。':'这次没有需要特别再练的记录。'}</p>}</section></div>
+   <p className="tk-real-summary-next">{summary.nextStep}</p><Link className="tk-submit" href="/courses">回到我的课程<ArrowRight size={18}/></Link>
+  </section>
+ </main>;
+}
+
 export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassroomMicrophone,navigate=navigateClassroom}:Props){
  const [snapshot,setSnapshot]=useState<ClassroomSnapshot|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[attempt,setAttempt]=useState(0),[busy,setBusy]=useState(false);
+ const promptId=useId();const [promptOpen,setPromptOpen]=useState(false);
  const [vision,setVision]=useState<ClassroomVisionState>({status:'off',generation:0});
  const [voiceFailure,setVoiceFailure]=useState<ClassroomVoiceFailure|null>(null),[playbackQueue,setPlaybackQueue]=useState(0);
  const [mic,setMic]=useState<'unchecked'|'checking'|'passed'|'failed'>('unchecked'),[micLevel,setMicLevel]=useState(0),[voiceState,setVoiceState]=useState<'idle'|'connecting'|'connected'|'closed'|'error'>('idle');
  const [levels,setLevels]=useState({child:0,teacher:0}),[tool,setTool]=useState<'pointer'|'pen'>('pointer'),[marks,setMarks]=useState<Mark[]>([]),[draft,setDraft]=useState<Draft|null>(null),[endDialog,setEndDialog]=useState(false),[reward,setReward]=useState(false),[sound,setSound]=useState(true),[notice,setNotice]=useState('');
  const camera=useClassroomCamera(classroomId,!!snapshot&&snapshot.status!=='paused'&&snapshot.status!=='ended'&&!endDialog);
  const stopCamera=camera.stop;
+ const visionAttempt=useRef<{stream:MediaStream;client:ClassroomVoiceHandle}|null>(null);
  const mounted=useRef(false),current=useRef<ClassroomSnapshot|null>(null),ended=useRef(false),locked=useRef(false),voice=useRef<ClassroomVoiceHandle|null>(null),voiceEpoch=useRef(0),disconnectRead=useRef<{epoch:number;controller:AbortController}|null>(null),micController=useRef<AbortController|null>(null),draftRef=useRef<Draft|null>(null),seenFeedback=useRef(new Set<string>()),rewardTimer=useRef<ReturnType<typeof setTimeout>|null>(null),continueButton=useRef<HTMLButtonElement>(null),soundEnabled=useRef(true),sounds=useRef(new PrototypeSounds());
  const stopMedia=useCallback(async()=>{
   voice.current?.stopVision();setVision({status:'off',generation:0});stopCamera();voiceEpoch.current++;disconnectRead.current?.controller.abort();disconnectRead.current=null;const previous=voice.current;voice.current=null;setLevels({child:0,teacher:0});setPlaybackQueue(0);setVoiceState('closed');sounds.current?.stop();setReward(false);
@@ -67,16 +83,17 @@ export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassro
   const parsed=classroomSnapshotSchema.safeParse(value);if(!parsed.success||!mounted.current||value.id!==classroomId||ended.current)return;
   if(current.current&&value.revision<current.current.revision)return;
   if(current.current?.stepIndex!==value.stepIndex||current.current?.status!==value.status){draftRef.current=null;setDraft(null);setNotice('');}
-  current.current=value;setSnapshot(value);
+  const previous=current.current;current.current=value;setSnapshot(value);
   if(initial){setSound(value.preferences.soundEffects);soundEnabled.current=value.preferences.soundEffects;}
   if(value.status==='ended'){ended.current=true;micController.current?.abort();void stopMedia();setEndDialog(false);return;}
   const feedback=value.feedback;
   if(feedback&&!seenFeedback.current.has(feedback.id)){
    seenFeedback.current.add(feedback.id);
-   if(!initial&&feedback.kind==='correct'){
+   const newAnswer=value.outcomes.some(outcome=>(outcome.status==='independent'||outcome.status==='assisted')&&value.course.steps.some(task=>task.id===outcome.stepId)&&!previous?.outcomes.some(old=>old.stepId===outcome.stepId));
+   if(!initial&&value.status==='active'&&feedback.kind==='correct'&&newAnswer){
     setReward(true);if(rewardTimer.current)clearTimeout(rewardTimer.current);rewardTimer.current=setTimeout(()=>setReward(false),2200);
     if(soundEnabled.current)void sounds.current?.play('correct');
-   }
+   }else if(feedback.kind!=='correct'){if(rewardTimer.current)clearTimeout(rewardTimer.current);setReward(false);}
   }
  },[classroomId,stopMedia]);
  useEffect(()=>{
@@ -85,7 +102,15 @@ export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassro
   return()=>{mounted.current=false;controller.abort();micController.current?.abort();disconnectRead.current?.controller.abort();voiceEpoch.current++;voice.current?.dispose();voice.current=null;if(rewardTimer.current)clearTimeout(rewardTimer.current);sounds.current?.stop();};
  },[classroomId,attempt,accept,navigate]);
  useEffect(()=>()=>{sounds.current?.dispose();},[]);
- useEffect(()=>{if(camera.state.status!=='on'||endDialog||snapshot?.status==='paused')voice.current?.stopVision();},[camera.state.status,endDialog,snapshot?.status]);
+ useEffect(()=>{
+  if(camera.state.status!=='on'||!camera.state.stream){visionAttempt.current=null;voice.current?.stopVision();return;}
+  const client=voice.current;
+  if(!client||voiceState!=='connected'||snapshot?.status!=='active'||endDialog)return;
+  if(visionAttempt.current?.stream===camera.state.stream&&visionAttempt.current.client===client)return;
+  // A camera-on gesture also authorizes sharing, including when made during preflight.
+  visionAttempt.current={stream:camera.state.stream,client};
+  if(!client.startVision(camera.state.stream))setVision({status:'unavailable',generation:0});
+ },[camera.state.status,camera.state.stream,voiceState,snapshot?.status,endDialog]);
  useEffect(()=>{if(snapshot?.status==='paused'&&voice.current)void stopMedia();},[snapshot?.status,stopMedia]);
  useEffect(()=>{
   if(!snapshot||snapshot.status==='ended')return;
@@ -164,10 +189,10 @@ export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassro
  const teacherTalking=levels.teacher>.008,childTalking=levels.child>.015;
  const preflight=!!state&&(state.status==='preflight'||(state.status==='active'&&voiceState!=='connected'&&voiceState!=='connecting'));
  const blocked=endDialog||state?.status==='paused'||preflight;
- const visionControls={state:vision,enabled:!!live&&camera.state.status==='on',stop:()=>{voice.current?.stopVision();setVision({status:'off',generation:vision.generation});},toggle:()=>{if(vision.status==='starting'||vision.status==='sharing'){voice.current?.stopVision();return;}if(!live||camera.state.status!=='on'||!camera.state.stream)return;if(!voice.current?.startVision(camera.state.stream))setVision({status:'unavailable',generation:vision.generation});}};
+ const visionControls={state:vision,enabled:!!live&&camera.state.status==='on',stop:()=>{voice.current?.stopVision();setVision({status:'off',generation:vision.generation});},toggle:()=>{if(!live||camera.state.status!=='on'||!camera.state.stream)return;if(!voice.current?.startVision(camera.state.stream))setVision({status:'unavailable',generation:vision.generation});}};
  if(loading)return <main className="tk-product tk-real-classroom"><p className="tk-class-loading" role="status">正在读取课堂…</p></main>;
  if(!state)return <main className="tk-product tk-real-classroom"><section className="tk-class-loading"><p className="tk-account-error" role="alert">{error||'课堂暂时无法读取。'}</p><button type="button" className="tk-submit" onClick={()=>{setLoading(true);setAttempt(value=>value+1);}}>重新读取</button><Link href="/courses">回到我的课程</Link></section></main>;
- if(state.status==='ended')return <main className="tk-product tk-real-summary"><header className="tk-product-header"><Link href="/courses" className="tk-wordmark">Tee<span>ko</span></Link><span>本次小结</span></header><section><img src="/prototype-assets/pose-celebrate.svg" alt="Teeko"/><h1>这节课已保存</h1><p>{state.course.title}</p><div className="tk-real-summary-stats"><div><strong>{time(state.elapsedSeconds)}</strong><span>本次课堂时长</span></div><div><strong>{state.outcomes.filter(item=>item.status==='independent').length}</strong><span>独立完成</span></div><div><strong>{state.outcomes.filter(item=>item.status==='assisted').length}</strong><span>提示后完成</span></div></div><p className="tk-summary-note">{state.endReason==='content_completed'?'本课内容已结束。':state.endReason==='time_limit'?'本次课堂时间已到，进度已保留。':state.endReason==='daily_limit'?'今日练习时间已用完，进度已保留。':'下次可以从保留的进度继续。'}</p><p className="tk-summary-note">详细报告暂未开放。</p><Link className="tk-submit" href="/courses">回到我的课程<ArrowRight size={18}/></Link></section></main>;
+ if(state.status==='ended')return <ClassroomRecap state={state}/>;
  return <main className="tk-product tk-real-classroom">
   <header className="tk-real-class-header" aria-hidden={blocked||undefined} inert={blocked}><BookOpen size={20}/><strong>{state.course.title}</strong><span>{state.course.subtitle}</span><time aria-label="已上课时间">{time(state.elapsedSeconds)}</time></header>
   <div className="tk-real-call-body" aria-hidden={blocked||undefined} inert={blocked}><section className="tk-real-book-area" aria-label="教材">
@@ -179,14 +204,14 @@ export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassro
     </svg>
     {reward&&<div className="tk-real-fireworks" aria-hidden="true">{Array.from({length:16},(_,index)=><i key={index} style={{'--spark-angle':`${index*22.5}deg`,'--spark-color':['#e77838','#e4b64d','#239a8d','#7a87c8'][index%4]} as CSSProperties}/>)}</div>}
    </div>}
-   <div className="tk-real-task"><div><strong>{step?.english??'Let’s talk.'}</strong><span role="status">{notice||state.feedback?.message||'可以开口，也可以点选或画圈。'}</span></div><div><button type="button" disabled={!live} onClick={()=>{void action('hint');}}>提示一下</button><button type="button" disabled={!live} onClick={()=>{void action(step?.kind==='listen'?'next':'skip');}}>{step?.kind==='listen'?'继续':'换一题'}<ArrowRight size={16}/></button></div></div>
+   <div className={`tk-real-task ${promptOpen?'is-expanded':''}`}><div><button type="button" className="tk-real-prompt-toggle" aria-label="课堂提示" aria-expanded={promptOpen} aria-controls={promptId} onClick={()=>setPromptOpen(value=>!value)}>课堂提示<ChevronDown size={15}/></button><div id={promptId} hidden={!promptOpen}><strong>{step?.english??'Let’s talk.'}</strong></div>{(notice||state.feedback?.message)&&<span role="status">{notice||state.feedback?.message}</span>}</div><div><button type="button" disabled={!live} onClick={()=>{setPromptOpen(true);void action('hint');}}>提示一下</button><button type="button" disabled={!live} onClick={()=>{void action(step?.kind==='listen'?'next':'skip');}}>{step?.id==='picnic-chat'?'查看小结':step?.kind==='listen'?'继续':'换一题'}<ArrowRight size={16}/></button></div></div>
   </section><aside className="tk-real-call-rail">
    <section className={`tk-real-video-tile tk-real-teacher ${teacherTalking?'is-speaking':''}`}><div className="tk-real-connection"><Wifi size={14}/>{voiceState==='connected'?'已连接':voiceState==='connecting'?'连接中':'未连接'}</div><TeacherStage level={levels.teacher} connected={voiceState==='connected'&&state.status==='active'} childSpeaking={childTalking} celebrating={reward} allowHandoff={state.preferences.provider==='openai'||playbackQueue<=0}/><footer><strong>Teeko 老师</strong><span>{teacherTalking?'正在说话':voiceState==='connected'?'正在听你说':state.status==='paused'?'已暂停':'等待连接'}</span><div className="tk-real-level" aria-label="老师声音">{[.35,.7,1,.55].map((scale,index)=><i key={index} style={{height:`${5+Math.min(1,levels.teacher*10)*scale*19}px`}}/>)}</div></footer></section>
    <section className={`tk-real-video-tile tk-real-child ${childTalking?'is-speaking':''}`}><div className="tk-real-connection"><Mic size={14}/>{mic==='passed'?'麦克风可用':mic==='checking'?'正在检查':'未检查'}</div><div className="tk-real-child-stage">{!preflight&&<ClassroomCameraPreview camera={camera} name={state.profile.name} vision={visionControls}/>}</div><footer><strong>{state.profile.name}</strong><span>{childTalking?'正在说话':voiceState==='connected'?'可以直接开口':'等待开始'}</span><Mic size={17}/></footer></section>
   </aside></div>
   {error&&!preflight&&!endDialog&&state.status!=='paused'&&<div className="tk-real-error" role="alert">{error}{voiceState==='error'||voiceState==='closed'?<button type="button" disabled={busy} onClick={()=>{void action('resume').then(result=>{if(result)setVoiceState('idle');});}}>准备重新连接</button>:null}</div>}
   <footer className="tk-real-controls" aria-hidden={blocked||undefined} inert={blocked}><div className="tk-real-tools"><button type="button" aria-label="指针" aria-pressed={tool==='pointer'} disabled={!live} onClick={()=>setTool('pointer')}><MousePointer2 size={20}/></button><button type="button" aria-label="画笔" aria-pressed={tool==='pen'} disabled={!live} onClick={()=>setTool('pen')}><Pencil size={20}/></button><button type="button" aria-label="撤销笔迹" disabled={!live||!marks.length} onClick={()=>setMarks(value=>value.slice(0,-1))}><Undo2 size={20}/></button></div><div className="tk-real-main-controls"><button type="button" aria-label={sound?'关闭互动音效':'开启互动音效'} aria-pressed={sound} onClick={()=>{const next=!sound;setSound(next);soundEnabled.current=next;if(!next)sounds.current?.stop();}}>{sound?<Volume2 size={20}/>:<VolumeX size={20}/>}</button><button type="button" aria-label="暂停课堂" disabled={busy||voiceState!=='connected'} onClick={()=>{void action('pause');}}><Pause size={18}/>暂停</button><button type="button" className="tk-real-end" aria-label="结束课堂" disabled={busy} onClick={()=>setEndDialog(true)}><PhoneOff size={18}/>结束</button></div></footer>
-  {preflight&&voiceState!=='connecting'&&!endDialog&&<div className="tk-real-scrim"><section className="tk-real-preflight" aria-label="准备上课"><div className="tk-real-preflight-art"><ClassroomCameraPreview camera={camera} name={state.profile.name} vision={visionControls}/></div><div><h1>准备上课</h1><p>声音用于实时对话。摄像头默认仅自己预览；上课后点击“让老师看见我”才分享画面，关闭后停止发送。</p><button className="tk-real-check" type="button" disabled={mic==='checking'} onClick={()=>{void check();}}>{mic==='passed'?<Check size={20}/>:<Mic size={20}/>}<span>{mic==='checking'?'请说一句 Hello…':mic==='passed'?'麦克风检查通过':'检查麦克风'}</span>{mic==='checking'&&<meter min={0} max={1} value={micLevel} aria-label="麦克风音量"/>}</button>{error&&<p className="tk-account-error" role="alert">{error}</p>}{(voiceState==='error'||voiceState==='closed')&&<button type="button" className="tk-real-check" disabled={busy} onClick={()=>{void action('resume').then(result=>{if(result)setVoiceState('idle');});}}>准备重新连接<RotateCcw size={16}/></button>}<button type="button" className="tk-submit" disabled={mic!=='passed'||busy||voiceState==='error'||voiceState==='closed'} onClick={connect}>开始上课<ArrowRight size={18}/></button><Link className="tk-real-back" href="/courses">回到我的课程</Link></div></section></div>}
+  {preflight&&voiceState!=='connecting'&&!endDialog&&<div className="tk-real-scrim"><section className="tk-real-preflight" aria-label="准备上课"><div className="tk-real-preflight-art"><ClassroomCameraPreview camera={camera} name={state.profile.name} vision={visionControls}/></div><div><h1>准备上课</h1><p>声音用于实时对话。开启摄像头后，老师就能看到你；关闭即停止分享。不出镜也能上课。</p><button className="tk-real-check" type="button" disabled={mic==='checking'} onClick={()=>{void check();}}>{mic==='passed'?<Check size={20}/>:<Mic size={20}/>}<span>{mic==='checking'?'请说一句 Hello…':mic==='passed'?'麦克风检查通过':'检查麦克风'}</span>{mic==='checking'&&<meter min={0} max={1} value={micLevel} aria-label="麦克风音量"/>}</button>{error&&<p className="tk-account-error" role="alert">{error}</p>}{(voiceState==='error'||voiceState==='closed')&&<button type="button" className="tk-real-check" disabled={busy} onClick={()=>{void action('resume').then(result=>{if(result)setVoiceState('idle');});}}>准备重新连接<RotateCcw size={16}/></button>}<button type="button" className="tk-submit" disabled={mic!=='passed'||busy||voiceState==='error'||voiceState==='closed'} onClick={connect}>开始上课<ArrowRight size={18}/></button><Link className="tk-real-back" href="/courses">回到我的课程</Link></div></section></div>}
   {voiceState==='connecting'&&!endDialog&&<div className="tk-real-connecting"><span role="status">正在连接老师…</span><button type="button" onClick={()=>{void stopMedia().then(reload).catch(failure=>setError(errorMessage(failure)));}}>取消连接</button></div>}
   {state.status==='paused'&&!endDialog&&<div className="tk-real-scrim"><section className="tk-real-pause" role="dialog" aria-modal="true" aria-label="课堂已暂停"><Pause size={24}/><h2>{voiceFailure?'课堂连接中断':'已暂停'}</h2>{voiceFailure&&<p role="alert" data-voice-failure={voiceFailure.code}>{voiceFailure.message}</p>}<div><button type="button" className="tk-submit" disabled={busy} onClick={()=>{void action('resume').then(result=>{if(result){setVoiceState('idle');setVoiceFailure(null);setError('');}});}}><Play size={18}/>继续上课</button><button type="button" disabled={busy} onClick={()=>setEndDialog(true)}>结束课堂</button></div></section></div>}
   {endDialog&&<div className="tk-real-scrim"><section className="tk-real-pause" role="dialog" aria-modal="true" aria-label="结束确认" onKeyDown={event=>{if(event.key==='Escape'&&!busy){event.preventDefault();setEndDialog(false);}if(event.key==='Tab'){const buttons=event.currentTarget.querySelectorAll<HTMLButtonElement>('button');const first=buttons[0],last=buttons[buttons.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}}}><h2>今天就学到这里？</h2><p>结束后保留本次进度。</p><div><button type="button" className="tk-submit" ref={continueButton} disabled={busy} onClick={()=>setEndDialog(false)}>继续上课</button><button type="button" className="tk-real-danger" disabled={busy} onClick={()=>{void action('end');}}>结束并保存</button></div></section></div>}

@@ -51,18 +51,30 @@ function fixture(initial:ClassroomSnapshot=snapshot,behavior:{pauseOnStop?:boole
  return{calls,voiceFactory,checkMicrophone:async()=>true,get visionStarts(){return visionStarts;},get visionStops(){return visionStops;},vision(value:import('../lib/classroom-vision').ClassroomVisionState){callbacks?.onVisionState?.(value);},get starts(){return starts;},get stops(){return stops;},get disposes(){return disposes;},disconnect(next:ClassroomSnapshot,state:'closed'|'error'='closed'){current=next;callbacks?.onState(state);},emit(next:ClassroomSnapshot){current=next;callbacks?.onSnapshot(next);},fail(next:ClassroomSnapshot){current=next;callbacks?.onFailure?.({code:'provider_error',message:'语音服务返回异常，课堂连接已停止，请重新连接。'});callbacks?.onError('语音服务返回异常，课堂连接已停止，请重新连接。');callbacks?.onState('error');}};
 }
 
-test('camera preview never shares automatically; explicit sharing requires connected voice and server acknowledgement',async()=>{
+test('opening camera shares automatically once voice connects, with no second consent button',async()=>{
  const f=fixture();let tracksStopped=0;
  const track=document.createElement('span') as unknown as MediaStreamTrack;Object.assign(track,{stop(){tracksStopped++;}});
  const stream={getTracks:()=>[track],getVideoTracks:()=>[track]} as unknown as MediaStream;
  Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>stream}});
  render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
  await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));fireEvent.click(screen.getByRole('button',{name:'开启摄像头'}));
- await waitFor(()=>check(screen.getByText('仅自己预览')));assert.equal(f.visionStarts,0);check((screen.getByRole('button',{name:'让老师看见我'}) as HTMLButtonElement).disabled);
- await startCameraTestLesson();assert.equal(f.visionStarts,0);fireEvent.click(screen.getByRole('button',{name:'让老师看见我'}));assert.equal(f.visionStarts,1);check(!screen.queryByText('画面分享中'));
+ await waitFor(()=>check(screen.getByLabelText('Mia的摄像头预览')));assert.equal(f.visionStarts,0);check(!screen.queryByRole('button',{name:'让老师看见我'}));
+ await startCameraTestLesson();await waitFor(()=>assert.equal(f.visionStarts,1));check(!screen.queryByText('画面分享中'));
  f.vision({status:'sharing',generation:1});await waitFor(()=>check(screen.getByText('画面分享中')));
- fireEvent.click(screen.getByRole('button',{name:'停止分享'}));await waitFor(()=>check(screen.getByText('仅自己预览')));assert.equal(tracksStopped,0);check(f.visionStops>=1);
- fireEvent.click(screen.getByRole('button',{name:'让老师看见我'}));fireEvent.click(screen.getByRole('button',{name:'关闭摄像头'}));await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));assert.equal(tracksStopped,1);check(f.visionStops>=2);
+ check(!screen.queryByRole('button',{name:'停止分享'}));
+ fireEvent.click(screen.getByRole('button',{name:'关闭摄像头'}));await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));assert.equal(tracksStopped,1);check(f.visionStops>=1);
+ fireEvent.click(screen.getByRole('button',{name:'开启摄像头'}));await waitFor(()=>assert.equal(f.visionStarts,2));
+});
+test('vision errors keep voice and camera preview alive without an automatic retry loop',async()=>{
+ const f=fixture();const track=document.createElement('span') as unknown as MediaStreamTrack;Object.assign(track,{stop(){}});
+ const stream={getTracks:()=>[track],getVideoTracks:()=>[track]} as unknown as MediaStream;
+ Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>stream}});
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();
+ fireEvent.click(screen.getByRole('button',{name:'开启摄像头'}));await waitFor(()=>assert.equal(f.visionStarts,1));
+ f.vision({status:'error',generation:1});await waitFor(()=>check(screen.getByRole('button',{name:'重试画面分享'})));
+ assert.equal(f.visionStarts,1);check(screen.getByLabelText('Mia的摄像头预览'));check(!(screen.getByRole('button',{name:'暂停课堂'}) as HTMLButtonElement).disabled);
+ fireEvent.click(screen.getByRole('button',{name:'重试画面分享'}));await waitFor(()=>assert.equal(f.visionStarts,2));
 });
 test('pause, end confirmation and disconnection stop image sharing and ignore terminal callbacks',async t=>{
  for(const cause of ['pause','end','disconnect'] as const)await t.test(cause,async()=>{
@@ -70,8 +82,8 @@ test('pause, end confirmation and disconnection stop image sharing and ignore te
   const stream={getTracks:()=>[track],getVideoTracks:()=>[track]} as unknown as MediaStream;
   Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>stream}});
   render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
-  await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));fireEvent.click(screen.getByRole('button',{name:'开启摄像头'}));await waitFor(()=>check(screen.getByText('仅自己预览')));await startCameraTestLesson();
-  fireEvent.click(screen.getByRole('button',{name:'让老师看见我'}));f.vision({status:'sharing',generation:1});await waitFor(()=>check(screen.getByText('画面分享中')));
+  await waitFor(()=>check(screen.getByRole('button',{name:'开启摄像头'})));fireEvent.click(screen.getByRole('button',{name:'开启摄像头'}));await waitFor(()=>check(screen.getByLabelText('Mia的摄像头预览')));await startCameraTestLesson();
+  await waitFor(()=>assert.equal(f.visionStarts,1));f.vision({status:'sharing',generation:1});await waitFor(()=>check(screen.getByText('画面分享中')));
   if(cause==='pause')fireEvent.click(screen.getByRole('button',{name:'暂停课堂'}));
   if(cause==='end'){fireEvent.click(screen.getByRole('button',{name:'结束课堂'}));await waitFor(()=>check(screen.getByRole('dialog',{name:'结束确认'})));fireEvent.click(screen.getByRole('button',{name:'结束并保存'}));}
   if(cause==='disconnect')f.disconnect({...snapshot,status:'paused',revision:8});
@@ -79,6 +91,27 @@ test('pause, end confirmation and disconnection stop image sharing and ignore te
   if(cause==='end'){await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));f.vision({status:'sharing',generation:1});check(!screen.queryByText('画面分享中'));}
   cleanup();
  });
+});
+
+test('classroom prompt is collapsed by default and can be expanded without interrupting voice',async()=>{
+ const f=fixture();render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();
+ const toggle=screen.getByRole('button',{name:'课堂提示'});assert.equal(toggle.getAttribute('aria-expanded'),'false');
+ const prompt=document.getElementById(toggle.getAttribute('aria-controls')!);check(prompt?.hasAttribute('hidden'));
+ fireEvent.click(toggle);assert.equal(toggle.getAttribute('aria-expanded'),'true');assert.equal(prompt?.hasAttribute('hidden'),false);check(prompt?.textContent?.includes('Can you find the apple?'));
+ fireEvent.click(toggle);assert.equal(toggle.getAttribute('aria-expanded'),'false');assert.equal(f.stops,0);
+});
+test('only a new verified correct outcome triggers reward; old feedback and ordinary speech do not',async()=>{
+ const feedback={id:'old-correct',kind:'correct' as const,message:'找到了！'};
+ const initial={...snapshot,feedback,outcomes:[{stepId:'earlier-task',status:'independent' as const}]};const f=fixture(initial);
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();check(!document.querySelector('.tk-real-fireworks'));
+ f.emit({...initial,status:'active',revision:2,feedback:{id:'unbacked-correct',kind:'correct',message:'普通回应'}});
+ await waitFor(()=>check(screen.getByText('普通回应')));check(!document.querySelector('.tk-real-fireworks'));
+ f.emit({...initial,status:'active',revision:3,feedback:{id:'new-correct',kind:'correct',message:'答对了'},outcomes:[...initial.outcomes,{stepId:'find-apple',status:'independent'}]});
+ await waitFor(()=>check(document.querySelector('.tk-real-fireworks')));
+ f.emit({...initial,status:'active',revision:4,feedback:{id:'retry',kind:'retry',message:'再想想'}});
+ await waitFor(()=>check(!document.querySelector('.tk-real-fireworks')));
 });
 
 test('classroom asks for microphone only after the check click and connects on a separate start gesture',async()=>{
@@ -116,8 +149,29 @@ test('an already ended lesson opens its factual summary without starting microph
  const f=fixture({...snapshot,status:'ended',endReason:'content_completed',endedAt:'2026-11-01T00:03:00Z',elapsedSeconds:180,outcomes:[{stepId:'find-apple',status:'assisted'}]});let checked=0;
  render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={async()=>{checked++;return true;}}/>);
  await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));
- assert.equal(checked,0);assert.equal(f.starts,0);check(screen.getByText('详细报告暂未开放。'));
+ assert.equal(checked,0);assert.equal(f.starts,0);check(screen.getByRole('heading',{name:'本次完成'}));check(screen.getByRole('heading',{name:'再练一点'}));assert.equal(screen.getAllByText('找出苹果').length,2);check(screen.getByText('这次在提示后完成，下次可以先自己试一次。'));check(!screen.queryByText('详细报告暂未开放。'));
  check(!screen.queryByText(/已掌握|发音分数|整理中/));
+});
+
+test('an early ending with no assessed answers shows an honest empty recap',async()=>{
+ const f=fixture({...snapshot,status:'ended',endReason:'manual',endedAt:'2026-11-01T00:01:00Z',elapsedSeconds:60});
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));
+ check(screen.getByText(/还没有足够的答题记录/));check(screen.getByText('还没有完成的答题记录。'));check(screen.getByText(/下次可以接着：找出苹果/));assert.equal(f.starts,0);
+});
+test('skipped practice stays a suggestion rather than a completed or mastered answer',async()=>{
+ const f=fixture({...snapshot,status:'ended',endReason:'manual',endedAt:'2026-11-01T00:01:00Z',outcomes:[{stepId:'find-apple',status:'skipped'}]});
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('heading',{name:'再练一点'})));
+ check(screen.getByText('这次选择跳过，有兴趣时再试；不据此判断能力。'));check(screen.getByText('还没有完成的答题记录。'));check(!screen.queryByText(/已掌握/));
+});
+test('the final conversation offers a clear recap action instead of ending during speech',async()=>{
+ const finalStep={...snapshot.course.steps[0],id:'picnic-chat',kind:'listen' as const,targetId:null,expected:null,english:'We can chat about our picnic.',chinese:'聊聊我们的野餐'};
+ const f=fixture({...snapshot,course:{...snapshot.course,steps:[finalStep]}});
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();
+ check(screen.getByRole('button',{name:'查看小结'}));assert.equal(f.calls.filter(call=>call.body?.type==='next').length,0);
+ fireEvent.click(screen.getByRole('button',{name:'查看小结'}));await waitFor(()=>assert.equal(f.calls.filter(call=>call.body?.type==='next').length,1));
 });
 
 test('repeated selection while a server action is pending sends only one versioned action',async()=>{
@@ -177,7 +231,7 @@ test('server end observed only after socket closure is reread into the terminal 
  const f=fixture();render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
  await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));fireEvent.click(screen.getByRole('button',{name:'检查麦克风'}));await waitFor(()=>check(!(screen.getByRole('button',{name:'开始上课'}) as HTMLButtonElement).disabled));fireEvent.click(screen.getByRole('button',{name:'开始上课'}));
  await waitFor(()=>assert.equal(f.starts,1));f.disconnect({...snapshot,status:'ended',revision:3,endReason:'time_limit',endedAt:'2026-11-01T00:10:00Z',elapsedSeconds:600});
- await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));check(screen.getByText('本次课堂时间已到，进度已保留。'));assert.equal(f.starts,1);
+ await waitFor(()=>check(screen.getByRole('heading',{name:'这节课已保存'})));check(screen.getByText(/本次课堂时间已到，进度已保留。/));assert.equal(f.starts,1);
 });
 
 test('close-related revision conflicts retry once with the same event ID',async()=>{

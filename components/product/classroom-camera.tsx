@@ -19,12 +19,12 @@ export function ClassroomCameraPreview({camera,name,vision}:{camera:ReturnType<t
  const video=useRef<HTMLVideoElement>(null);
  useEffect(()=>{const element=video.current;if(!element)return;element.srcObject=camera.state.stream;return()=>{element.srcObject=null;};},[camera.state.stream]);
  const on=camera.state.status==='on',requesting=camera.state.status==='requesting';
- const sharing=vision?.state.status==='sharing'||vision?.state.status==='starting';
+ const failed=vision?.state.status==='error'||vision?.state.status==='unavailable';
  return <div className={`tk-camera-preview ${on?'is-on':''}`}>
   {on?<video ref={video} autoPlay muted playsInline aria-label={`${name}的摄像头预览`}/>:<><span className="tk-real-child-avatar">{Array.from(name.trim())[0]?.toUpperCase()||'T'}</span><small><CameraOff size={14}/>{requesting?'等待浏览器授权':'摄像头未开启'}</small></>}
-  {on&&<span className="tk-vision-status" role="status">{vision?.state.status==='sharing'?'画面分享中':vision?.state.status==='starting'?'正在开启画面分享…':'仅自己预览'}</span>}
+  {on&&<span className="tk-vision-status" role="status">{vision?.state.status==='sharing'?'画面分享中':vision?.state.status==='starting'?'正在开启画面分享…':failed?'画面未分享':'上课后自动分享画面'}</span>}
   <div className="tk-camera-actions">
-   {on&&vision&&<button type="button" className="tk-vision-toggle" disabled={!sharing&&!vision.enabled} onClick={vision.toggle}>{sharing?'停止分享':'让老师看见我'}</button>}
+   {on&&vision&&failed&&<button type="button" className="tk-vision-toggle" disabled={!vision.enabled} onClick={vision.toggle}>重试画面分享</button>}
    <button type="button" className="tk-camera-toggle" disabled={!camera.enabled} onClick={()=>{if(on||requesting)vision?.stop();camera.toggle();}} aria-pressed={on} aria-label={on?'关闭摄像头':requesting?'取消摄像头授权':'开启摄像头'}>{on?<CameraOff size={15}/>:<Camera size={15}/>} {on?'关闭摄像头':requesting?'取消':'开启摄像头'}</button>
   </div>
   {on&&(vision?.state.status==='error'||vision?.state.status==='unavailable')&&<p className="tk-vision-message" role="status">{vision.state.status==='error'?'画面分享已停止，可重试；语音课堂可以继续。':'当前课堂暂不支持画面分享，可以继续语音上课。'}</p>}
