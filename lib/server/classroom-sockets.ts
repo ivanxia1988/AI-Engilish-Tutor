@@ -282,7 +282,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       // Native same-task tools own their continuation; the synchronous refresh
       // must not replace its queued spoken prefix with a second feedback cue.
       if (cue && (taskChanged || (feedbackChanged && (!protocol || toolsPending === 0)))) speak(`Current objective: ${step?.english ?? 'The lesson is finished.'} ${taskChanged
-        ? 'Briefly acknowledge the verified previous result, ask this current question naturally, then listen.'
+        ? 'Briefly acknowledge the verified previous result. The activity is available, but do not interrupt an ongoing conversation or immediately pull the learner back. Respond to their latest idea, then offer this activity at a natural pause. In open conversation, keep talking until the learner chooses to finish.'
         : `Latest verified feedback: ${snapshot.feedback?.message.slice(0, 100) ?? 'Use the current picture.'} Give one useful clue if needed, then listen without repeating the same demand.`}`);
     };
     const tool = async (callId: string, name: string, args: unknown, delegationId: string | null = null) => {

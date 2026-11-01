@@ -165,6 +165,17 @@ test('heartbeat publishes a changed snapshot while preserving its server revisio
   } finally { await h.close(); }
 });
 
+test('a task refresh offers the next activity without ordering a conversational interruption',async()=>{
+ const h=await harness('openai');
+ try{
+  const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));
+  h.advance();await waitFor(()=>h.sent.some(event=>event.type==='session.commentary.append'&&String(event.content).includes('do not interrupt an ongoing conversation')));
+  const cue=h.sent.find(event=>event.type==='session.commentary.append'&&String(event.content).includes('do not interrupt an ongoing conversation'));
+  assert.match(String(cue?.content),/natural pause/);assert.match(String(cue?.content),/learner chooses to finish/);
+  socket.send(JSON.stringify({type:'close'}));await once(socket,'close');
+ }finally{await h.close();}
+});
+
 test('ending while a tool awaits cannot produce late confirmation or recreate speech', async () => {
   const h = await harness('openai', { delayedTool: true });
   try {

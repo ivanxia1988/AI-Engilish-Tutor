@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
+import { classroomControl, normalizeClassroomSpeech, spokenTaskAttempt } from './classroom-teaching';
 import type { ClassroomAction, ClassroomFeedback, ClassroomOutcome, ClassroomPreferences, ClassroomSnapshot, CourseCard, PublishedCourse } from '../classroom-contract';
 
 export class ClassroomError extends Error {
@@ -17,7 +18,7 @@ type Transcript={role:'child'|'teacher';text:string;final:boolean;itemId?:string
 type Options={now?:()=>Date;maxSeconds?:number;dailySeconds?:number};
 const fail=(code:string,message:string,status=409):never=>{throw new ClassroomError(code,message,status);};
 const day=(now:Date)=>new Date(now.getTime()+8*3600000).toISOString().slice(0,10);
-const normalize=(text:string)=>text.toLowerCase().replace(/[^a-z\u4e00-\u9fff ]/g,' ').replace(/\s+/g,' ').trim();
+const normalize=normalizeClassroomSpeech;
 export class ClassroomService {
   private now:()=>Date; private maxMs:number; private dailyMs:number;
   constructor(private pool:Pool,options:Options={}){
@@ -164,11 +165,10 @@ export class ClassroomService {
   async receiveTranscript(accountId:string,id:string,epoch:number,token:string,event:Transcript){
     await this.transcript(accountId,id,epoch,token,event);
     if(event.role!=='child'||!event.final||!event.contextKey)return;
-    const input=normalize(event.text);
-    const control=/^(?:(?:please|can we|let s) )?(?:stop|pause)(?: please)?$|^(?:暂停|停一下|停止)$/.test(input)?'pause'
-      :/^(?:please )?(?:skip|next)(?: this| one| question| please)?$|^(?:can we|let s) skip(?: this)?$|^(?:跳过|换一题|不想重复了)$/.test(input)?'skip':null;
+    const control=classroomControl(event.text);
     if(control){
       const state=await this.get(accountId,id);
+      if(control==='skip'&&state.course.steps[state.stepIndex]?.id==='picnic-chat')return;
       if(state.status==='active'&&state.connectionEpoch===epoch&&event.contextKey===`${id}:${epoch}:${state.stepIndex}`)await this.action(accountId,id,{eventId:randomUUID(),expectedRevision:state.revision,type:control});
       return;
     }
@@ -183,25 +183,25 @@ export class ClassroomService {
     let output:{status:string;english?:string;highlighted?:string[]}={status:'unavailable',english:'That check is unavailable. Continue with the current picture; do not claim to have inspected unknown marks.'};
     if(name==='delegate'){
       const spoken=recent?.text??'';const normalized=normalize(spoken);
-      if(/\b(skip|another|next)\b|跳过|换一/.test(normalized)&&recent){name='skip';}
+      if(classroomControl(spoken)==='skip'&&recent){name='skip';}
       else if(/circle|highlight|圈|标/.test(normalized)&&recent){name='highlight_objects';data.objectIds=course.pages[0].objects.filter(x=>normalized.includes(x.label)||normalized.includes(x.chinese)).map(x=>x.id);}
       else if(step.kind==='speak'&&recent){name='submit_spoken_answer';data.answer=spoken;}
-      else output={status:'retry',english:`Continue naturally without forcing repetition. The current objective is: ${step.english}`};
+      else output={status:'conversation',english:'This is conversation, not an assessed answer. Respond to what the learner said and follow their interest. Do not demand the current target or infer a request to skip.'};
     }
     if(name==='highlight_objects'){
       const ids=Array.isArray(data.objectIds)?data.objectIds.filter((x):x is string=>typeof x==='string'):[];
       if(ids.length&&ids.length<=5&&ids.every(x=>course.pages.find(p=>p.id===step.pageId)?.objects.some(o=>o.id===x))){row.teacher_object_ids=ids;if(!row.helped_steps.includes(step.id))row.helped_steps.push(step.id);row.revision++;this.feedback(row,'hint','老师标出了图案。');output={status:'confirmed',highlighted:ids,english:'The application has drawn the requested highlight. You may refer to it. This is help, not an independently correct answer.'};}
-    }else if(name==='skip'&&recent){this.advance(row,course,'skipped');row.revision++;output={status:'confirmed',english:'The learner chose to skip. Respect the choice and continue with the next objective.'};}
+    }else if(name==='skip'&&step.id==='picnic-chat'){output={status:'conversation',english:'This is already the open conversation. Change topic if the learner wants; they can tap the finish button when ready. Do not hang up or claim the session has ended.'};}
+    else if(name==='skip'&&recent&&classroomControl(recent.text)==='skip'){this.advance(row,course,'skipped');row.revision++;output={status:'confirmed',english:'The learner chose to skip. Respect the choice and continue with the next objective.'};}
     else if(name==='submit_spoken_answer'){
       const answer=typeof data.answer==='string'?normalize(data.answer):'';const evidence=recent?normalize(recent.text):'';
-      const matches=step.expected?.split('|').some(word=>new RegExp(`\\b${word.endsWith('y')?word.slice(0,-1)+'(?:y|ies)':word+'s?'}\\b`,'i').test(evidence));
-      const negativeOrUnclear=/\b(not|no|never|don t|doesn t|can t|cannot|won t|skip|help|wait|stop|maybe|or)\b|不|没|别|跳过|不会|等等/.test(evidence);
-      const fruitCount=course.words.filter(word=>new RegExp(`\\b${word.endsWith('y')?word.slice(0,-1)+'(?:y|ies)':word+'s?'}\\b`,'i').test(evidence)).length;
-      if(step.kind==='speak'&&recent&&answer&&evidence&&(evidence.includes(answer)||answer.includes(evidence))&&matches&&!negativeOrUnclear&&fruitCount===1){
+      const attempt=recent?spokenTaskAttempt(step,recent.text,course.words):'retry';
+      if(step.kind==='speak'&&recent&&answer&&evidence&&(evidence.includes(answer)||answer.includes(evidence))&&attempt==='correct'){
         await db.query('UPDATE teeko_classroom_transcripts SET consumed=true WHERE classroom_id=$1 AND connection_epoch=$2 AND item_id=$3 AND role=\'child\'',[id,epoch,recent.item_id]);
         this.feedback(row,'correct','说出来了！');this.advance(row,course,row.helped_steps.includes(step.id)?'assisted':'independent');row.revision++;
-        output={status:'confirmed',english:'The completed transcript contains the target expression. Give brief specific encouragement, then follow the next application objective. This confirms words only, not pronunciation quality.'};
-      }else output={status:'retry',english:'A completed matching learner answer has not been confirmed. Give one gentle cue or accept skipping. Never claim a pronunciation score or force repetition.'};
+        output={status:'confirmed',english:"The completed transcript contains the target expression. Give brief specific encouragement. Stay with the learner's idea; the next activity is available when a natural conversational pause comes. This confirms words only, not pronunciation quality."};
+      }else if(attempt==='conversation')output={status:'conversation',english:'The learner is talking rather than answering the task. Respond to the actual topic and ask a natural follow-up; do not grade it, repeat the target question, skip, or end the lesson.'};
+      else output={status:'retry',english:'This attempt has not yet matched the current expression. Respond supportively, offer a different example only if useful, or accept an explicit skip. Never force repetition or claim pronunciation scores.'};
     }
     await this.save(db,row);return {output,snapshot:await this.snapshot(db,row)};
   });}

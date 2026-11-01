@@ -38,7 +38,7 @@ test('real classroom persistence, concurrency, evidence and bounded leases', {sk
     const row=(await f.pool.query('SELECT id FROM teeko_classrooms')).rows[0];
     await assert.rejects(f.service.get(f.other,row.id));
     const restarted=new (await import('../lib/server/classroom-service.ts')).ClassroomService(f.pool,f.options);
-    assert.equal((await restarted.get(f.owner,row.id)).course.version,'1');
+    assert.equal((await restarted.get(f.owner,row.id)).course.version,'2');
   });
   await t.test('actions are idempotent, stale ones fail, assisted selections never become independent',async t=>{
     const f=await fixture(t); const created=await f.service.create(f.owner,'picnic');
@@ -112,6 +112,52 @@ test('real classroom persistence, concurrency, evidence and bounded leases', {sk
     const f=await fixture(t);const c=await f.service.create(f.owner,'picnic');const lease=await f.service.claim(f.owner,c.id);
     await f.service.receiveTranscript(f.owner,c.id,lease.epoch,lease.ownerToken,{contextKey:`${c.id}:${lease.epoch}:0`,role:'child',text:'Can we skip this?',final:true,itemId:'skip'});
     const state=await f.service.get(f.owner,c.id);assert.equal(state.stepIndex,1);assert.equal(state.outcomes[0].status,'skipped');
+  });
+  await t.test('stories mentioning a target and next weekend neither answer nor skip an activity',async t=>{
+    const f=await fixture(t);const c=await f.service.create(f.owner,'picnic');const lease=await f.service.claim(f.owner,c.id);
+    let state=await f.service.action(f.owner,c.id,{eventId:randomUUID(),expectedRevision:lease.snapshot.revision,type:'select',objectIds:['apple']});
+    const contextKey=`${c.id}:${lease.epoch}:1`;
+    for(const [index,text] of ['My dog stole an apple yesterday.','Next weekend I will visit my grandma.','Tell me another story.'].entries()){
+      f.advance(1);
+      await f.service.receiveTranscript(f.owner,c.id,lease.epoch,lease.ownerToken,{contextKey,role:'child',text,final:true,itemId:`story-${index}`});
+      const result=await f.service.tool(f.owner,c.id,lease.epoch,lease.ownerToken,'delegate',{contextKey});
+      assert.equal(result.output.status,'conversation');assert.equal(result.snapshot.stepIndex,1);assert.equal(result.snapshot.outcomes.length,1);
+      const attemptedSkip=await f.service.tool(f.owner,c.id,lease.epoch,lease.ownerToken,'skip',{contextKey});
+      assert.equal(attemptedSkip.snapshot.stepIndex,1);
+    }
+    state=await f.service.get(f.owner,c.id);assert.equal(state.status,'active');
+    await f.service.receiveTranscript(f.owner,c.id,lease.epoch,lease.ownerToken,{contextKey,role:'child',text:'It is an apple.',final:true,itemId:'real-answer'});
+    assert.equal((await f.service.get(f.owner,c.id)).stepIndex,2);
+  });
+  await t.test('new picnic applied expressions lead to open conversation, not automatic hang-up',async t=>{
+    const f=await fixture(t);const c=await f.service.create(f.owner,'picnic');const lease=await f.service.claim(f.owner,c.id);let state=lease.snapshot;
+    for(let i=0;i<6;i++)state=await f.service.action(f.owner,c.id,{eventId:randomUUID(),expectedRevision:state.revision,type:'skip'});
+    for(const [index,text] of ['I like apples.',"Let's have a picnic!",'I will bring bananas.'].entries()){
+      f.advance(1);await f.service.receiveTranscript(f.owner,c.id,lease.epoch,lease.ownerToken,{contextKey:`${c.id}:${lease.epoch}:${state.stepIndex}`,role:'child',text,final:true,itemId:`answer-${index}`});
+      state=await f.service.get(f.owner,c.id);assert.equal(state.status,'active');assert.equal(state.stepIndex,7+index);
+    }
+    assert.equal(state.course.steps[state.stepIndex].id,'picnic-chat');
+    for(const [index,text] of ['I like strawberries.','I want to tell you about my dog.'].entries()){
+      f.advance(1);await f.service.receiveTranscript(f.owner,c.id,lease.epoch,lease.ownerToken,{contextKey:`${c.id}:${lease.epoch}:9`,role:'child',text,final:true,itemId:`chat-${index}`});
+    }
+    state=await f.service.get(f.owner,c.id);assert.equal(state.status,'active');assert.equal(state.stepIndex,9);assert.equal(state.outcomes.length,9);
+    await f.service.receiveTranscript(f.owner,c.id,lease.epoch,lease.ownerToken,{contextKey:`${c.id}:${lease.epoch}:9`,role:'child',text:'Next.',final:true,itemId:'last-next'});
+    const nextTopic=await f.service.tool(f.owner,c.id,lease.epoch,lease.ownerToken,'delegate',{contextKey:`${c.id}:${lease.epoch}:9`});
+    assert.equal(nextTopic.snapshot.status,'active');assert.equal(nextTopic.snapshot.stepIndex,9);
+    state=await f.service.get(f.owner,c.id);
+    state=await f.service.action(f.owner,c.id,{eventId:randomUUID(),expectedRevision:state.revision,type:'next'});
+    assert.equal(state.status,'ended');assert.equal(state.endReason,'content_completed');assert.equal(state.outcomes.at(-1)?.status,'unassessed');
+  });
+  await t.test('publishing v2 keeps an old v1 session and checksum intact without transferring its checkpoint',async t=>{
+    const f=await fixture(t);const c=await f.service.create(f.owner,'picnic');
+    await f.pool.query("UPDATE teeko_classrooms SET course_version='1' WHERE id=$1",[c.id]);
+    const checksum=(await f.pool.query("SELECT checksum FROM teeko_courses WHERE id='picnic' AND version='1'")).rows[0].checksum;
+    await (await import('../lib/server/course-catalog.ts')).publishTrialCourses(f.pool);
+    assert.equal((await f.pool.query("SELECT checksum FROM teeko_courses WHERE id='picnic' AND version='1'")).rows[0].checksum,checksum);
+    const lease=await f.service.claim(f.owner,c.id);assert.equal(lease.snapshot.course.version,'1');assert.equal(lease.snapshot.course.steps.length,7);
+    const skipped=await f.service.action(f.owner,c.id,{eventId:randomUUID(),expectedRevision:lease.snapshot.revision,type:'skip'});
+    await f.service.action(f.owner,c.id,{eventId:randomUUID(),expectedRevision:skipped.revision,type:'end'});
+    const v2=await f.service.create(f.owner,'picnic');assert.equal(v2.course.version,'2');assert.equal(v2.stepIndex,0);assert.deepEqual(v2.outcomes,[]);
   });
   await t.test('usage is assigned to actual local calendar intervals and an old classroom cannot bypass a new daily cap',async t=>{
     const f=await fixture(t);f.advance(new Date('2026-11-01T15:59:55Z').getTime()-f.options.now().getTime());
