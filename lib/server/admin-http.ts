@@ -3,6 +3,7 @@ import {teacherAgentInputSchema,teacherModelInputSchema} from '../teacher-agent'
 import {accountResponse} from './account-http';
 import type {AdminService} from './admin-service';
 import {hasAdminHost} from './admin-origin';
+import {modelCredentialInputSchema,modelCredentialResetSchema,type ModelCredentialInput,type ModelCredentialReset,type ModelCredentialStatus} from '../model-credentials';
 
 export const adminPreviewSchema=z.object({
  agent:teacherAgentInputSchema,profile:z.object({name:z.string().trim().min(1).max(30),ageRange:z.enum(['8–9','10–11','12–13']),level:z.enum(['starter','sentences','conversation','unsure'])}).strict(),
@@ -11,7 +12,7 @@ export const adminPreviewSchema=z.object({
 export type AdminPreviewInput=z.infer<typeof adminPreviewSchema>;
 export const adminTryoutSchema=adminPreviewSchema.extend({text:z.string().trim().min(1).max(1000),taskId:z.string().min(1).max(80)}).strict();
 export type AdminTryoutInput=z.infer<typeof adminTryoutSchema>;
-type Dependencies={origin:string;service:AdminService;authenticate:(request:Request)=>Promise<{id:string}|null>;providers:()=>{qwen:boolean;openai:boolean};limit:(id:string,tryout:boolean)=>Promise<void>;preview:(id:string,input:AdminPreviewInput)=>Promise<string>;tryout:(id:string,input:AdminTryoutInput)=>Promise<unknown>;problem?:(error:unknown)=>{code:string;message:string;status:number}|null};
+type Dependencies={origin:string;service:AdminService;authenticate:(request:Request)=>Promise<{id:string}|null>;providers:(id:string)=>{qwen:boolean;openai:boolean}|Promise<{qwen:boolean;openai:boolean}>;limit:(id:string,tryout:boolean)=>Promise<void>;preview:(id:string,input:AdminPreviewInput)=>Promise<string>;tryout:(id:string,input:AdminTryoutInput)=>Promise<unknown>;problem?:(error:unknown)=>{code:string;message:string;status:number}|null;credentials?:{status:(accountId:string,id:string)=>Promise<ModelCredentialStatus>;set:(accountId:string,id:string,value:ModelCredentialInput)=>Promise<ModelCredentialStatus>;reset:(accountId:string,id:string,value:ModelCredentialReset)=>Promise<ModelCredentialStatus>}};
 class AdminHttpProblem extends Error{constructor(public code:string,message:string,public status:number){super(message);}}
 const fail=(code:string,message:string,status:number):never=>{throw new AdminHttpProblem(code,message,status);};
 const uuid=z.string().uuid(),revision=z.number().int().positive();
@@ -35,7 +36,9 @@ export function createAdminHandler(deps:Dependencies){return async(request:Reque
   if(write&&(request.headers.get('origin')!==deps.origin||request.headers.get('sec-fetch-site')==='cross-site'))fail('ORIGIN','请求来源无效，请刷新重试。',403);
   if(request.method==='GET'){
    await deps.limit(user!.id,false);
-   if(path==='/config')return accountResponse({ok:true,...await deps.service.config(user!.id),providers:deps.providers()});
+   if(path==='/config')return accountResponse({ok:true,...await deps.service.config(user!.id),providers:await deps.providers(user!.id)});
+   const credentials=/^\/models\/([^/]+)\/credentials$/.exec(path);
+   if(credentials&&deps.credentials)return accountResponse({ok:true,credential:await deps.credentials.status(user!.id,uuid.parse(credentials[1]))});
    if(path==='/overview'){const days=z.enum(['7','30']).parse(url.searchParams.get('days')??'7');return accountResponse({ok:true,overview:await deps.service.overview(user!.id,Number(days))});}
    if(path==='/users'){const page=z.coerce.number().int().min(0).max(100000).parse(url.searchParams.get('page')??0),pageSize=z.coerce.number().int().min(1).max(50).parse(url.searchParams.get('pageSize')??20);return accountResponse({ok:true,...await deps.service.users(user!.id,{page,pageSize})});}
    fail('NOT_FOUND','管理接口不存在。',404);
@@ -43,6 +46,8 @@ export function createAdminHandler(deps:Dependencies){return async(request:Reque
   if(!write)fail('METHOD','不支持此请求方式。',405);
   await deps.limit(user!.id,path==='/tryout');const body=await json(request);
   if(request.method==='POST'){
+   const credentials=/^\/models\/([^/]+)\/credentials(\/reset)?$/.exec(path);
+   if(credentials&&deps.credentials){const id=uuid.parse(credentials[1]);return accountResponse({ok:true,credential:credentials[2]?await deps.credentials.reset(user!.id,id,modelCredentialResetSchema.parse(body)):await deps.credentials.set(user!.id,id,modelCredentialInputSchema.parse(body))});}
    if(path==='/models')return accountResponse({ok:true,model:await deps.service.createModel(user!.id,teacherModelInputSchema.parse(body))});
    if(path==='/agents')return accountResponse({ok:true,agent:await deps.service.createAgent(user!.id,teacherAgentInputSchema.parse(body))});
    if(path==='/preview')return accountResponse({ok:true,prompt:await deps.preview(user!.id,adminPreviewSchema.parse(body))});

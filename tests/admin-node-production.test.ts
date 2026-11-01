@@ -12,6 +12,7 @@ import {migrateAccounts} from '../scripts/migrate-accounts.mjs';
 import {AdminAuthService} from '../lib/server/admin-auth';
 import {hashPassword} from '../lib/server/auth-crypto';
 import {DEFAULT_TEACHER_AGENT} from '../lib/teacher-agent';
+import {modelCredentialStatusSchema} from '../lib/model-credentials';
 const enabled=process.env.TEEKO_ADMIN_NODE_SMOKE==='1',database=process.env.TEST_DATABASE_URL;
 async function stop(child:ChildProcess|undefined){if(!child||child.exitCode!==null||child.signalCode!==null)return;const finished=once(child,'exit');child.kill('SIGTERM');if(await Promise.race([finished,delay(4000,'timeout')])==='timeout'){child.kill('SIGKILL');await finished;}}
 test('actual Node administrator login guards private pages, publishes versions and keeps student sessions separate',{skip:!enabled,timeout:60000},async t=>{
@@ -41,6 +42,13 @@ test('actual Node administrator login guards private pages, publishes versions a
  const setCookie=login.headers.getSetCookie().find(value=>value.startsWith('teeko_admin_session='));assert(setCookie?.includes('HttpOnly')&&setCookie.includes('SameSite=Strict'));const cookie=setCookie!.split(';')[0];
  assert.equal((await fetch(`${origin}/admin`,{headers:{cookie},redirect:'manual'})).status,200);
  const config=await parsed(request('/admin/config',undefined,cookie),configResponse);assert.equal(config.models.length,5);assert.equal(config.agents.length,1);assert(config.activeRelease);
+ const credentialResponse=z.object({ok:z.literal(true),credential:modelCredentialStatusSchema}),modelId=config.models.find(model=>model.provider==='qwen'&&model.purpose==='realtime')!.id;
+ const before=await parsed(request(`/admin/models/${modelId}/credentials`,undefined,cookie),credentialResponse);assert.equal(before.credential.configured,false);assert.equal(config.providers.qwen,false);
+ const credentialInput={provider:'qwen',expectedRevision:0,apiKey:'synthetic-dynamic-node-key',workspaceId:'fixture-space',region:'cn-beijing'};
+ const savedKey=await parsed(request(`/admin/models/${modelId}/credentials`,credentialInput,cookie),credentialResponse);assert.equal(savedKey.credential.source,'model');assert.equal(savedKey.credential.revision,1);
+ const dynamicConfig=await parsed(request('/admin/config',undefined,cookie),configResponse);assert.equal(dynamicConfig.providers.qwen,true);assert(!JSON.stringify(dynamicConfig).includes(credentialInput.apiKey));
+ const encrypted=(await pool.query('SELECT ciphertext FROM teeko_model_credentials WHERE model_id=$1',[modelId])).rows[0].ciphertext as Buffer;assert(!encrypted.toString('utf8').includes(credentialInput.apiKey));
+ const reset=await parsed(request(`/admin/models/${modelId}/credentials/reset`,{provider:'qwen',expectedRevision:1},cookie),credentialResponse);assert.equal(reset.credential.configured,false);assert.equal(reset.credential.revision,2);
  const overview=await parsed(request('/admin/overview?days=7',undefined,cookie),overviewResponse);assert.equal(overview.overview.registeredUsers,1);
  const listed=await parsed(request('/admin/users?page=0&pageSize=20',undefined,cookie),usersResponse);assert.equal(listed.total,1);assert.equal(listed.users[0].id,student);
  const created=await parsed(request('/admin/agents',{...DEFAULT_TEACHER_AGENT,name:'Fixture teacher'},cookie),agentResponse);assert(created.agent.id);

@@ -14,6 +14,7 @@ import {buildTeacherInstructions,buildTeacherGuidance,type TeacherTeachingState}
 import type {FrozenTeacherConfig} from '../teacher-agent';
 import {createTeacherAssessment,type TeacherAssessment} from './teacher-assessment';
 import {classroomControl} from './classroom-teaching';
+import {getTeacherCredentialRoutes} from './model-credentials-runtime';
 
 let service:ClassroomService|undefined;
 let publishing:Promise<void>|undefined;
@@ -24,22 +25,23 @@ export async function getClassroomService(){
   const assess:TeacherAssessment=async(input,signal)=>{
     const provider=input.snapshot.preferences.provider,model=input.config.routes[provider]?.reasoning?.model;
     if(!model||provider==='openai'&&readRuntimeEnv('OPENAI_CHILD_DATA_READY')!=='true')throw new Error('教学判断暂时不可用。');
-    return createTeacherAssessment({provider,model,apiKey:(readRuntimeEnv(provider==='qwen'?'DASHSCOPE_API_KEY':'OPENAI_API_KEY')??'').trim(),workspaceId:readRuntimeEnv('DASHSCOPE_WORKSPACE_ID'),region:readRuntimeEnv('DASHSCOPE_REGION')})(input,signal);
+    const credential=await getTeacherCredentialRoutes().forModel(provider,'reasoning',input.config.routes[provider]!.reasoning);
+    return createTeacherAssessment({provider,model,...credential})(input,signal);
   };
   service??=new ClassroomService(pool,{assess});return service;
 }
-export function classroomProviders(){
-  const env=(key:string)=>(readRuntimeEnv(key)??'').trim();
+export async function classroomProviders(config:FrozenTeacherConfig|null){
+  const configured=await getTeacherCredentialRoutes().availability(config);
   return [
-    {id:'qwen' as const,name:'通义',configured:Boolean(env('DASHSCOPE_API_KEY')&&env('DASHSCOPE_WORKSPACE_ID'))},
-    {id:'openai' as const,name:'GPT Live',configured:Boolean(env('OPENAI_API_KEY')&&env('OPENAI_CHILD_DATA_READY')==='true')},
+    {id:'qwen' as const,name:'通义',configured:configured.qwen},
+    {id:'openai' as const,name:'GPT Live',configured:configured.openai},
   ];
 }
 export async function handleClassroomRequest(request:Request){
   try{
     const origin=accountOrigin(),accounts=getAccountService(),service=await getClassroomService();
     const activeTeacher=await resolvePublishedTeacher(getAccountPool(readRuntimeEnv('DATABASE_URL')));
-    const providers=classroomProviders().map(provider=>({...provider,configured:provider.configured&&(!activeTeacher||!!activeTeacher.routes[provider.id])}));
+    const providers=await classroomProviders(activeTeacher);
     return await createClassroomHandler({origin,service,authenticate:req=>accounts.session(accountCookie(req,'teeko_session')),providers:()=>providers,limit:id=>accounts.limit(`classroom-http:${id}`,90,60),changed:refreshClassroom})(request);
   }catch{return Response.json({ok:false,error:{code:'UNAVAILABLE',message:'课堂服务暂时不可用，请稍后重试。'}},{status:503,headers:{'Cache-Control':'no-store'}});}
 }
@@ -52,7 +54,10 @@ export async function openClassroomVoice(request:Request,id:string):Promise<Voic
   if(!user||!user.profileComplete)throw new ClassroomError('UNAUTHORIZED','请先登录并填写档案。',401);
   const service=await getClassroomService();
   const initial=await service.get(user.id,id);
-  if(!classroomProviders().some(provider=>provider.id===initial.preferences.provider&&provider.configured))throw new ClassroomError('VOICE_UNAVAILABLE','语音服务尚未配置。',503);
+  const before=await service.teacherRuntime(user.id,id);
+  let configuration;
+  try{configuration=await getTeacherCredentialRoutes().voice(initial,before.config);}catch{throw new ClassroomError('VOICE_UNAVAILABLE','语音服务尚未配置。',503);}
+  if(initial.preferences.provider==='openai'&&!configuration.childDataReady)throw new ClassroomError('VOICE_UNAVAILABLE','语音服务尚未配置。',503);
   await accounts.limit(`classroom-connect:${user.id}`,12,60);
   const lease=await service.claim(user.id,id);
   const active=async()=>Boolean((await accounts.session(token))?.id===user.id);
@@ -60,8 +65,11 @@ export async function openClassroomVoice(request:Request,id:string):Promise<Voic
   if(teacher.config&&!route){await service.release(user.id,id,lease.epoch,lease.ownerToken);throw new ClassroomError('VOICE_UNAVAILABLE','本节课未配置所选教师服务。',503);}
   let observe:VoiceLease['observe'];
   // Invalid optional vision configuration must not take down an otherwise usable voice session.
-  if(lease.snapshot.preferences.provider==='openai'&&(!teacher.config||teacher.config.routes.openai?.vision))try{observe=createOpenAIClassroomVision({apiKey:(readRuntimeEnv('OPENAI_API_KEY')??'').trim(),model:(teacher.config?.routes.openai?.vision?.model||readRuntimeEnv('OPENAI_VISION_MODEL')||'gpt-4.1-mini').trim()});}catch{observe=undefined;}
-  return {id,epoch:lease.epoch,provider:lease.snapshot.preferences.provider,...(route?{model:route.realtime.model}:{}),
+  if(lease.snapshot.preferences.provider==='openai'&&(!teacher.config||teacher.config.routes.openai?.vision))observe=async(frame,signal)=>{
+    const credential=await getTeacherCredentialRoutes().forModel('openai','vision',teacher.config?.routes.openai?.vision);
+    return createOpenAIClassroomVision({apiKey:credential.apiKey,model:(teacher.config?.routes.openai?.vision?.model||readRuntimeEnv('OPENAI_VISION_MODEL')||'gpt-4.1-mini').trim()})(frame,signal);
+  };
+  return {id,epoch:lease.epoch,provider:lease.snapshot.preferences.provider,configuration,...(route?{model:route.realtime.model}:{}),
     voice:teacher.config?.voices[lease.snapshot.preferences.provider][lease.snapshot.preferences.voice]??(lease.snapshot.preferences.provider==='qwen'?(lease.snapshot.preferences.voice==='male'?'Aiden':'Jennifer'):(lease.snapshot.preferences.voice==='male'?'meridian':'gleam')),
     ...(observe?{observe}:{}),
     teachingGuidance:buildTeacherGuidance(lease.snapshot,teacher.config,teacher.state),instructions:classroomInstructions(lease.snapshot,teacher.config,teacher.state),initialCue:`Welcome the learner briefly by name, invite them into the current activity without rushing: ${lease.snapshot.course.steps[lease.snapshot.stepIndex].english}. Do not read the instructions aloud.`,

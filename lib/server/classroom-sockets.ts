@@ -18,6 +18,7 @@ import {CLASSROOM_VISION_MAX_BASE64,type ClassroomVisionObserver} from '../class
 export type VoiceLease = {
   id: string; epoch: number; provider: 'qwen' | 'openai'; instructions: string; initialCue: string;
   remainingMs: number; snapshot: ClassroomSnapshot; voice?: string; model?:string; teachingGuidance?:string;observe?:ClassroomVisionObserver;
+  configuration?:ClassroomVoiceConfig;
   heartbeat(): Promise<{ snapshot: ClassroomSnapshot; instructions: string;teachingGuidance?:string } | null>;
   started?(sessionId: string): Promise<void>;
   transcript(event: { role: 'child' | 'teacher'; text: string; final: boolean; itemId?: string; contextKey: string; source: 'speech' | 'typed' }): Promise<void>;
@@ -93,7 +94,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       opening.then(value => { if (cancelled) void value.closed().catch(() => {}); }, () => {});
       lease = await timed(opening, 8000);
       if (socket.destroyed || closing) { await lease.closed(); return; }
-      const defaults = (options.config ?? configFromEnvironment)(lease.provider);
+      const defaults = lease.configuration ?? (options.config ?? configFromEnvironment)(lease.provider);
       const config = { ...defaults, ...(lease.voice ? { voice: lease.voice } : {}),...(lease.model?{model:lease.model}:{}) };
       if (!config.key || (lease.provider === 'openai' && !config.childDataReady) || !Number.isFinite(lease.remainingMs) || lease.remainingMs <= 0) throw new Error('Voice configuration unavailable.');
       const endpoint = lease.provider === 'qwen'

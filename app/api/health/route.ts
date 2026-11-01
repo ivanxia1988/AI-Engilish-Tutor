@@ -8,8 +8,9 @@ export async function GET() {
   try {
     accountOrigin(); getAccountService();
     if (!readRuntimeEnv('RESEND_API_KEY') || !readRuntimeEnv('RESEND_FROM') || readRuntimeEnv('ACCOUNT_TERMS_VERSION') !== ACCOUNT_TERMS_VERSION) throw new Error('configuration');
-    const result = await getAccountPool(readRuntimeEnv('DATABASE_URL')).query('SELECT count(*)::int AS applied FROM teeko_schema_migrations WHERE name=ANY($1)', [['0001_accounts.sql','0002_classrooms.sql']]);
-    if (result.rows[0]?.applied !== 2) throw new Error('migration');
+    const required=['0001_accounts.sql','0002_classrooms.sql','0003_teacher_agents.sql','0004_admin_auth.sql','0005_model_credentials.sql'];
+    const result = await getAccountPool(readRuntimeEnv('DATABASE_URL')).query('SELECT count(*)::int AS applied FROM teeko_schema_migrations WHERE name=ANY($1)', [required]);
+    if (result.rows[0]?.applied !== required.length) throw new Error('migration');
     return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
   } catch { return Response.json({ ok: false }, { status: 503, headers: { 'Cache-Control': 'no-store' } }); }
 }

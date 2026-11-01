@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import WebSocket, { WebSocketServer } from 'ws';
-import { attachClassroomSockets, type VoiceLease } from '../lib/server/classroom-sockets';
+import { attachClassroomSockets, type VoiceLease, type ClassroomVoiceConfig } from '../lib/server/classroom-sockets';
 import type { ClassroomSnapshot } from '../lib/classroom-contract';
 import { refreshClassroom } from '../lib/server/classroom-events';
 import type { PcmOutputClock } from '../lib/server/classroom-audio';
@@ -17,9 +17,10 @@ const waitFor = async (condition: () => boolean) => {
   const end = Date.now() + 2000;
   while (!condition()) { if (Date.now() >= end) throw new Error('Expected socket event did not arrive.'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
-async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { model?:string; teachingGuidance?:string;remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; refreshOnTool?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string; observe?:ClassroomVisionObserver; noAutoPong?:boolean; connectionProbeMs?:number; connectionProbeTimeoutMs?:number } = {}) {
+async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { configuration?:ClassroomVoiceConfig; model?:string; teachingGuidance?:string;remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; refreshOnTool?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string; observe?:ClassroomVisionObserver; noAutoPong?:boolean; connectionProbeMs?:number; connectionProbeTimeoutMs?:number } = {}) {
   const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp, autoPong: !extra.noAutoPong });
   const sent: Record<string, unknown>[] = [], downstream: Record<string, unknown>[] = [], transcripts: unknown[] = [], tools: unknown[] = [];
+  let capturedAuthorization: string | undefined;
   let upstream: WebSocket | undefined, opened = 0, released = 0, heartbeatAllowed = true, current = snapshot, resolveTool: (() => void) | undefined, resolveTranscript: (() => void) | undefined, persistedStarts = 0;
   let heartbeatCalls = 0, delayHeartbeat = false, releaseHeartbeat: (() => void) | undefined;
   vendor.on('connection', socket => {
@@ -40,7 +41,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { model?:str
   const vendorAddress = upstreamHttp.address(); assert(vendorAddress && typeof vendorAddress !== 'string');
   const app = createServer();
   const lease: VoiceLease = {
-    id, epoch: 1, provider, instructions: 'Current verified task: find apple.', initialCue: 'Can you find the apple?', remainingMs: extra.remainingMs ?? 60000, snapshot, observe:extra.observe,...(extra.model?{model:extra.model}:{}),...(extra.teachingGuidance?{teachingGuidance:extra.teachingGuidance}:{}), ...(extra.voice ? { voice: extra.voice } : {}),
+    id, epoch: 1, provider, configuration:extra.configuration, instructions: 'Current verified task: find apple.', initialCue: 'Can you find the apple?', remainingMs: extra.remainingMs ?? 60000, snapshot, observe:extra.observe,...(extra.model?{model:extra.model}:{}),...(extra.teachingGuidance?{teachingGuidance:extra.teachingGuidance}:{}), ...(extra.voice ? { voice: extra.voice } : {}),
     async heartbeat() {
       heartbeatCalls++; const captured = current;
       if (delayHeartbeat) { delayHeartbeat = false; await new Promise<void>(resolve => { releaseHeartbeat = resolve; }); }
@@ -58,7 +59,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { model?:str
     origin: 'http://localhost:8080',
     open: async () => { opened++; return lease; },
     config: () => ({ key: 'non-production-fixture', model: provider === 'qwen' ? 'qwen3.8-omni-flash-realtime' : 'gpt-live-1', voice: 'Tina', workspaceId: 'workspace', region: 'cn-beijing', childDataReady: true }),
-    connect: () => new WebSocket(`ws://127.0.0.1:${vendorAddress.port}`),
+    connect: (_url,headers) => {capturedAuthorization=headers.Authorization;return new WebSocket(`ws://127.0.0.1:${vendorAddress.port}`);},
     heartbeatMs: extra.heartbeatMs ?? 25, startupMs: extra.startupMs ?? 1000, closeMs: 30, utteranceSettleMs: 20, responseAckMs: extra.responseAckMs ?? 1000,
     audioClock: extra.audioClock,
     gptOutputQuietMs: extra.gptOutputQuietMs, gptOutputWaitMs: extra.gptOutputWaitMs,
@@ -72,7 +73,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { model?:str
     socket.on('message', data => downstream.push(JSON.parse(data.toString())));
     return socket;
   };
-  return { connect, sent, downstream, transcripts, tools, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, get heartbeatCalls() { return heartbeatCalls; },get transcriptWaiting(){return !!resolveTranscript;}, delayNextHeartbeat: () => { delayHeartbeat = true; }, releaseHeartbeat: () => releaseHeartbeat?.(), revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1, course: { ...snapshot.course, version: extra.contextVersion ?? snapshot.course.version } }; }, feedback: (message = 'Try once more.') => { current = { ...current, revision: current.revision + 1, feedback: { id: `feedback_${current.revision + 1}`, kind: 'retry', message } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
+  return { connect, sent, downstream, transcripts, tools, get capturedAuthorization(){return capturedAuthorization;}, get opened() { return opened; }, get released() { return released; }, get persistedStarts() { return persistedStarts; }, get upstream() { return upstream; }, get heartbeatCalls() { return heartbeatCalls; },get transcriptWaiting(){return !!resolveTranscript;}, delayNextHeartbeat: () => { delayHeartbeat = true; }, releaseHeartbeat: () => releaseHeartbeat?.(), revoke: () => { heartbeatAllowed = false; }, resolveTool: () => resolveTool?.(), resolveTranscript: () => resolveTranscript?.(), advance: () => { current = { ...snapshot, revision: 2, stepIndex: 1, course: { ...snapshot.course, version: extra.contextVersion ?? snapshot.course.version } }; }, feedback: (message = 'Try once more.') => { current = { ...current, revision: current.revision + 1, feedback: { id: `feedback_${current.revision + 1}`, kind: 'retry', message } }; }, async close() { await controller.close(); for (const socket of vendor.clients) socket.terminate(); await new Promise<void>(resolve => vendor.close(() => resolve())); await new Promise<void>(resolve => upstreamHttp.close(() => resolve())); await new Promise<void>(resolve => app.close(() => resolve())); } };
 }
 
 function pcmFrame(voiced: boolean) {
@@ -774,4 +775,11 @@ test('excess measurement pings consume the existing bounded message allowance',a
 
 test('published model selection is applied by the server lease rather than a browser parameter',async()=>{
  const h=await harness('openai',{model:'gpt-live-1-synthetic',teachingGuidance:'effectiveLevel=starter; hintLimit=2'});try{const socket=h.connect();await once(socket,'open');await waitFor(()=>h.sent.some(event=>event.type==='session.start'));const start=h.sent.find(event=>event.type==='session.start')!;assert.equal((start.session as {model:string}).model,'gpt-live-1-synthetic');h.advance();await refreshClassroom(id);await waitFor(()=>h.sent.some(event=>event.type==='session.thinking.append'&&JSON.stringify(event).includes('effectiveLevel=starter')));socket.close();}finally{await h.close();}
+});
+
+
+test('server-resolved model credentials authenticate upstream without appearing in browser events',async()=>{
+ const key='synthetic-private-model-key';
+ const h=await harness('openai',{configuration:{key,model:'gpt-live-1',voice:'gleam',childDataReady:true}});
+ try{const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));assert.equal(h.capturedAuthorization,`Bearer ${key}`);assert(!JSON.stringify(h.downstream).includes(key));assert(!JSON.stringify(h.sent).includes(key));socket.close();}finally{await h.close();}
 });
