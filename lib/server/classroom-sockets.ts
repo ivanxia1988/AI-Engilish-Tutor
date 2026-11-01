@@ -574,11 +574,12 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       const event = json(data);
       const messageBytes=Array.isArray(data)?Buffer.concat(data).length:data instanceof ArrayBuffer?data.byteLength:data.length;
       if(event?.type!=='vision.frame'&&messageBytes>32768){fail('protocol_error');return;}
-      // A bounded monitoring message has its own one-per-second budget.
+      // One valid monitoring ping per second is free; excess still spends the normal budget.
       if(event?.type==='ping'&&event.nonce!==undefined){
         if(!bounded(event.nonce,64)||!/^[A-Za-z0-9_-]+$/.test(event.nonce)){fail('protocol_error');return;}
-        if(!ready||Date.now()-lastQualityPingAt<1000)return;
-        lastQualityPingAt=Date.now();toClient({type:'pong',nonce:event.nonce});return;
+        if(ready&&Date.now()-lastQualityPingAt>=1000){lastQualityPingAt=Date.now();toClient({type:'pong',nonce:event.nonce});return;}
+        if(++messages>24)fail('input_rate_limited');
+        return;
       }
       if (++messages > 24) { fail('input_rate_limited'); return; }
       if(event&&typeof event.type==='string'&&event.type.startsWith('vision.')){if(ready)void vision?.handle(event);return;}

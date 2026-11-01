@@ -762,3 +762,12 @@ test('a bounded measurement ping has its own budget and cannot spend the media/c
   assert.equal(h.released,0);assert(!h.downstream.some(event=>event.type==='error'));
  }finally{await h.close();}
 });
+
+test('excess measurement pings consume the existing bounded message allowance',async()=>{
+ const h=await harness();try{
+  const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));
+  for(let i=0;i<100;i++)socket.send(JSON.stringify({type:'ping',nonce:`excess_probe_${i}`}));
+  await waitFor(()=>h.released===1);
+  assert(h.downstream.some(event=>event.type==='error'&&event.code==='input_rate_limited'));
+ }finally{await h.close();}
+});
