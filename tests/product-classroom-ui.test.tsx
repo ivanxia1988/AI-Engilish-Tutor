@@ -93,13 +93,45 @@ test('pause, end confirmation and disconnection stop image sharing and ignore te
  });
 });
 
-test('classroom prompt is collapsed by default and can be expanded without interrupting voice',async()=>{
+test('classroom removes the task strip and its hint and skip controls',async()=>{
  const f=fixture();render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
  await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();
- const toggle=screen.getByRole('button',{name:'课堂提示'});assert.equal(toggle.getAttribute('aria-expanded'),'false');
- const prompt=document.getElementById(toggle.getAttribute('aria-controls')!);check(prompt?.hasAttribute('hidden'));
- fireEvent.click(toggle);assert.equal(toggle.getAttribute('aria-expanded'),'true');assert.equal(prompt?.hasAttribute('hidden'),false);check(prompt?.textContent?.includes('Can you find the apple?'));
- fireEvent.click(toggle);assert.equal(toggle.getAttribute('aria-expanded'),'false');assert.equal(f.stops,0);
+ assert.equal(screen.queryByRole('button',{name:'课堂提示'}),null);
+ assert.equal(screen.queryByRole('button',{name:'提示一下'}),null);
+ assert.equal(screen.queryByRole('button',{name:'换一题'}),null);
+ assert.equal(document.querySelector('.tk-real-task'),null);assert.equal(f.stops,0);
+});
+
+test('top exit asks for confirmation, Escape cancels, and successful save returns to courses',async()=>{
+ const f=fixture(),destinations:string[]=[];
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone} navigate={path=>destinations.push(path)}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();
+ fireEvent.click(screen.getByRole('button',{name:'退出课堂'}));
+ check(screen.getByRole('dialog',{name:'退出确认'}));assert.deepEqual(destinations,[]);
+ fireEvent.keyDown(screen.getByRole('dialog'),{key:'Escape'});assert.equal(screen.queryByRole('dialog'),null);assert.equal(f.calls.filter(x=>x.body?.type==='end').length,0);
+ fireEvent.click(screen.getByRole('button',{name:'退出课堂'}));fireEvent.click(screen.getByRole('button',{name:'保存并退出'}));
+ await waitFor(()=>assert.deepEqual(destinations,['/courses']));assert.equal(f.calls.filter(x=>x.body?.type==='end').length,1);
+});
+test('failed exit save keeps the classroom visible and never navigates away',async()=>{
+ const f=fixture(),baseFetch=globalThis.fetch,destinations:string[]=[];
+ globalThis.fetch=async(input,init)=>String(input).endsWith('/actions')?Response.json({ok:false,error:{code:'UNAVAILABLE',message:'保存失败，请重试。'}},{status:503}):baseFetch(input,init);
+ render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone} navigate={path=>destinations.push(path)}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();
+ fireEvent.click(screen.getByRole('button',{name:'退出课堂'}));fireEvent.click(screen.getByRole('button',{name:'保存并退出'}));
+ await waitFor(()=>check(screen.getByRole('alert').textContent?.includes('保存失败')));assert.deepEqual(destinations,[]);check(screen.getByRole('dialog',{name:'退出确认'}));
+});
+test('connection badges distinguish measured quality and never show good before measurement',async()=>{
+ const f=fixture();let callback:((value:{link:'device'|'teacher';quality:{status:'checking'|'good'|'fair'|'poor'|'unavailable';rttMs:number|null}})=>void)|undefined;
+ const factory:import('../components/product/classroom').VoiceFactory=options=>{callback=(options as typeof options&{onConnectionQuality?:typeof callback}).onConnectionQuality;return f.voiceFactory(options);};
+ render(<Classroom classroomId={snapshot.id} voiceFactory={factory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();
+ assert.equal(screen.getByLabelText('老师连接质量').textContent,'检测中');
+ callback?.({link:'teacher',quality:{status:'fair',rttMs:480}});callback?.({link:'device',quality:{status:'good',rttMs:60}});
+ await waitFor(()=>assert.equal(screen.getByLabelText('老师连接质量').textContent,'连接一般'));
+ assert.equal(screen.getByLabelText('你的连接质量').textContent,'连接良好');
+ callback?.({link:'teacher',quality:{status:'poor',rttMs:1200}});
+ await waitFor(()=>assert.equal(screen.getByLabelText('老师连接质量').textContent,'连接较差'));
+ assert.equal(f.stops,0);
 });
 test('only a new verified correct outcome triggers reward; old feedback and ordinary speech do not',async()=>{
  const feedback={id:'old-correct',kind:'correct' as const,message:'找到了！'};
