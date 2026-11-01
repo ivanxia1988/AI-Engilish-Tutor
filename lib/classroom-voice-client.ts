@@ -1,4 +1,5 @@
 import type { ClassroomSnapshot } from './classroom-contract';
+import {ClassroomConnectionSamples,CLASSROOM_CONNECTION_INTERVAL_MS,CLASSROOM_CONNECTION_TIMEOUT_MS,isClassroomConnectionQuality,type ClassroomConnectionUpdate} from './classroom-connection';
 import { PcmVoiceAudio, type PcmVoiceAudioOptions } from './voice-audio';
 import { classroomVoiceFailure, type ClassroomVoiceErrorCode, type ClassroomVoiceFailure } from './classroom-voice-errors';
 import {ClassroomCameraFrames,CLASSROOM_CAMERA_FRAME_BASE64,type ClassroomCameraFrameOwner} from './classroom-camera-frames';
@@ -15,6 +16,7 @@ export type ClassroomVoiceClientOptions = {
   onFailure?(failure: ClassroomVoiceFailure): void;
   onPlaybackQueue?(milliseconds: number): void;
   onVisionState?(state:ClassroomVisionState):void;
+  onConnectionQuality?(update:ClassroomConnectionUpdate):void;
 };
 export type ClassroomVoiceClientDependencies = {
   media(): Promise<MediaStream>;
@@ -23,6 +25,7 @@ export type ClassroomVoiceClientDependencies = {
   audio(options: PcmVoiceAudioOptions): AudioOwner;
   startupMs: number; closeMs: number;
   frames?():ClassroomCameraFrameOwner;
+  now?():number;
 };
 
 /** One explicitly started microphone and server-owned connection. No stored audio or credentials. */
@@ -40,6 +43,11 @@ export class ClassroomVoiceClient {
   private startReject: ((reason: Error) => void) | null = null;
   private closeResolve: (() => void) | null = null;
   private closing: Promise<void> | null = null;
+  private connectionSamples=new ClassroomConnectionSamples();
+  private connectionTimer:ReturnType<typeof setInterval>|null=null;
+  private connectionTimeout:ReturnType<typeof setTimeout>|null=null;
+  private connectionPending:{nonce:string;sentAt:number}|null=null;
+  private connectionSequence=0;
   private visionGeneration=0;
   private visionActive=false;
   private visionSequence=0;
@@ -104,8 +112,16 @@ export class ClassroomVoiceClient {
         if (this.stopped) return;
         this.audio?.mute(this.muted);
         if (this.startup) clearTimeout(this.startup); this.startup = null;
-        this.options.onState('connected'); this.startResolve?.(); this.startResolve = null; this.startReject = null;
+        this.options.onState('connected'); this.startConnectionChecks(); this.startResolve?.(); this.startResolve = null; this.startReject = null;
       } catch { if (!this.stopped) this.fail('无法启动麦克风采集，请重新连接。', 'audio_capture_failed'); }
+    } else if(event.type==='pong'){
+      const pending=this.connectionPending;
+      if(!this.ready||!pending||event.nonce!==pending.nonce)return;
+      this.connectionPending=null;if(this.connectionTimeout)clearTimeout(this.connectionTimeout);this.connectionTimeout=null;
+      const quality=this.connectionSamples.record(this.connectionNow()-pending.sentAt);
+      this.options.onConnectionQuality?.({link:'device',quality});
+    } else if(event.type==='connection.quality'){
+      if(this.ready&&event.link==='teacher'&&isClassroomConnectionQuality(event.quality))this.options.onConnectionQuality?.({link:'teacher',quality:event.quality});
     } else if(event.type==='vision.state'){
       if(!this.visionActive||event.generation!==this.visionGeneration||!['off','starting','sharing','error','unavailable'].includes(String(event.status)))return;
       const status=event.status as ClassroomVisionState['status'];
@@ -124,6 +140,7 @@ export class ClassroomVoiceClient {
     }
   }
   private releaseLocal() {
+    this.stopConnectionChecks();
     this.stopVision();
     if (this.startup) clearTimeout(this.startup); this.startup = null;
     this.ready = false;
@@ -141,6 +158,27 @@ export class ClassroomVoiceClient {
   }
   sendText(text: string): boolean {
     return this.ready && !this.stopped && text.trim().length > 0 && text.length <= 1000 && this.send({ type: 'text', text: text.trim() });
+  }
+  private connectionNow(){return this.dependencies.now?.()??performance.now();}
+  private startConnectionChecks(){
+    this.options.onConnectionQuality?.({link:'device',quality:{status:'checking',rttMs:null}});
+    const probe=()=>{
+      if(this.stopped||!this.ready||this.connectionPending)return;
+      const nonce=`cq_${++this.connectionSequence}`,sentAt=this.connectionNow();
+      this.connectionPending={nonce,sentAt};
+      if(!this.send({type:'ping',nonce})){this.connectionPending=null;this.options.onConnectionQuality?.({link:'device',quality:this.connectionSamples.missed()});return;}
+      this.connectionTimeout=setTimeout(()=>{
+        this.connectionTimeout=null;if(this.stopped||this.connectionPending?.nonce!==nonce)return;
+        this.connectionPending=null;this.options.onConnectionQuality?.({link:'device',quality:this.connectionSamples.missed()});
+      },CLASSROOM_CONNECTION_TIMEOUT_MS);
+    };
+    probe();this.connectionTimer=setInterval(probe,CLASSROOM_CONNECTION_INTERVAL_MS);
+  }
+  private stopConnectionChecks(){
+    if(this.connectionTimer)clearInterval(this.connectionTimer);this.connectionTimer=null;
+    if(this.connectionTimeout)clearTimeout(this.connectionTimeout);this.connectionTimeout=null;this.connectionPending=null;
+    const quality=this.connectionSamples.reset();
+    this.options.onConnectionQuality?.({link:'device',quality});this.options.onConnectionQuality?.({link:'teacher',quality});
   }
   private publishVision(status:ClassroomVisionState['status']){
     const messages={off:'',starting:'正在开启画面分享…',sharing:'画面分享中',error:'画面分享已停止，请重试；语音课堂可以继续。',unavailable:'当前课堂暂不支持画面分享，可以继续语音上课。'};

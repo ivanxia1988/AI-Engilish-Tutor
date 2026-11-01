@@ -17,8 +17,8 @@ const waitFor = async (condition: () => boolean) => {
   const end = Date.now() + 2000;
   while (!condition()) { if (Date.now() >= end) throw new Error('Expected socket event did not arrive.'); await new Promise(resolve => setTimeout(resolve, 5)); }
 };
-async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; refreshOnTool?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string; observe?:ClassroomVisionObserver } = {}) {
-  const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp });
+async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingMs?: number; startupMs?: number; autoReady?: boolean; delayedTool?: boolean; voice?: string; startedFails?: boolean; delayedTranscript?: boolean; delayedResponses?: boolean; responseAckMs?: number; instructions?: string; spokenResult?: string; heartbeatMs?: number; refreshOnTranscript?: boolean; refreshOnTool?: boolean; audioClock?: PcmOutputClock; gptOutputQuietMs?: number; gptOutputWaitMs?: number; contextVersion?: string; observe?:ClassroomVisionObserver; noAutoPong?:boolean; connectionProbeMs?:number; connectionProbeTimeoutMs?:number } = {}) {
+  const upstreamHttp = createServer(), vendor = new WebSocketServer({ server: upstreamHttp, autoPong: !extra.noAutoPong });
   const sent: Record<string, unknown>[] = [], downstream: Record<string, unknown>[] = [], transcripts: unknown[] = [], tools: unknown[] = [];
   let upstream: WebSocket | undefined, opened = 0, released = 0, heartbeatAllowed = true, current = snapshot, resolveTool: (() => void) | undefined, resolveTranscript: (() => void) | undefined, persistedStarts = 0;
   let heartbeatCalls = 0, delayHeartbeat = false, releaseHeartbeat: (() => void) | undefined;
@@ -62,6 +62,7 @@ async function harness(provider: 'qwen' | 'openai' = 'qwen', extra: { remainingM
     heartbeatMs: extra.heartbeatMs ?? 25, startupMs: extra.startupMs ?? 1000, closeMs: 30, utteranceSettleMs: 20, responseAckMs: extra.responseAckMs ?? 1000,
     audioClock: extra.audioClock,
     gptOutputQuietMs: extra.gptOutputQuietMs, gptOutputWaitMs: extra.gptOutputWaitMs,
+    connectionProbeMs:extra.connectionProbeMs,connectionProbeTimeoutMs:extra.connectionProbeTimeoutMs,
   });
   app.listen(0, '127.0.0.1'); await once(app, 'listening');
   const address = app.address(); assert(address && typeof address !== 'string');
@@ -728,5 +729,36 @@ test('a recoverable provider image-parameter error stops only vision; unrelated 
   h.upstream!.send(JSON.stringify({type:'error',error:{type:'invalid_request_error',param:'image',code:'invalid_value',message:'private provider text must not be forwarded'}}));
   await waitFor(()=>h.downstream.some(event=>event.type==='vision.state'&&event.status==='error'));assert.equal(h.released,0);assert.equal(socket.readyState,WebSocket.OPEN);assert(!JSON.stringify(h.downstream).includes('private provider text'));
   h.upstream!.send(JSON.stringify({type:'error',error:{type:'invalid_request_error',param:'session.modalities',code:'invalid_value'}}));await waitFor(()=>h.released===1);assert(h.downstream.some(event=>event.type==='error'&&event.code==='provider_error'));
+ }finally{await h.close();}
+});
+
+
+test('real vendor WebSocket pong provides teacher RTT separately from browser ping nonce',async t=>{
+ for(const provider of ['qwen','openai'] as const)await t.test(provider,async()=>{
+  const h=await harness(provider);try{
+   const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));
+   socket.send(JSON.stringify({type:'ping',nonce:'device_probe_1'}));
+   await waitFor(()=>h.downstream.some(event=>event.type==='pong'&&event.nonce==='device_probe_1'));
+   await waitFor(()=>h.downstream.some(event=>event.type==='connection.quality'&&event.link==='teacher'&&(event.quality as {status?:string}).status==='good'));
+   const event=h.downstream.find(event=>event.type==='connection.quality'&&(event.quality as {status?:string}).status==='good')!;
+   assert.equal(typeof (event.quality as {rttMs:unknown}).rttMs,'number');assert.equal(h.released,0);
+  }finally{await h.close();}
+ });
+});
+test('a missing provider pong reports poor without terminating the media session',async()=>{
+ const h=await harness('qwen',{noAutoPong:true,connectionProbeMs:20,connectionProbeTimeoutMs:30});
+ try{const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));
+  await waitFor(()=>h.downstream.some(event=>event.type==='connection.quality'&&(event.quality as {status?:string}).status==='poor'));
+  assert.equal(socket.readyState,WebSocket.OPEN);assert.equal(h.released,0);assert(!h.downstream.some(event=>event.type==='error'));
+ }finally{await h.close();}
+});
+
+test('a bounded measurement ping has its own budget and cannot spend the media/control allowance',async()=>{
+ const h=await harness();try{
+  const socket=h.connect();await once(socket,'open');await waitFor(()=>h.downstream.some(event=>event.type==='ready'));
+  for(let i=0;i<24;i++)socket.send(JSON.stringify({type:'ping'}));
+  socket.send(JSON.stringify({type:'ping',nonce:'quality_does_not_spend_audio_budget'}));
+  await waitFor(()=>h.downstream.some(event=>event.type==='pong'&&event.nonce==='quality_does_not_spend_audio_budget'));
+  assert.equal(h.released,0);assert(!h.downstream.some(event=>event.type==='error'));
  }finally{await h.close();}
 });

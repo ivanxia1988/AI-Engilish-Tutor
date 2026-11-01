@@ -4,6 +4,7 @@ import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import WebSocket, { WebSocketServer } from 'ws';
 import type { ClassroomSnapshot } from '../classroom-contract';
+import {ClassroomConnectionSamples,CLASSROOM_CONNECTION_INTERVAL_MS,CLASSROOM_CONNECTION_TIMEOUT_MS} from '../classroom-connection';
 import { createQwenProtocol, qwenEndpoint, type QwenRegion } from '../voice-providers/qwen';
 import type { VoiceCommand } from '../voice-providers/types';
 import { CLASSROOM_VOICE_TOOLS } from '../voice-instructions';
@@ -34,6 +35,7 @@ export type ClassroomSocketOptions = {
   heartbeatMs?: number; startupMs?: number; closeMs?: number; utteranceSettleMs?: number; responseAckMs?: number;
   gptOutputQuietMs?: number; gptOutputWaitMs?: number;
   audioClock?: PcmOutputClock;
+  connectionProbeMs?:number;connectionProbeTimeoutMs?:number;
 };
 const MAX_BUFFER = 256_000, MAX_OUTPUT_BYTES = 192_000;
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
@@ -113,6 +115,10 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     let stepIndex = lease.snapshot.stepIndex, feedbackId = lease.snapshot.feedback?.id, counter = 0, frames = 0, windowStart = Date.now(), messages = 0, lastTextAt = 0, toolsPending = 0;
     let closePromise: Promise<void> | undefined, resolveFinal: (() => void) | undefined;
     let audioStarted=false,imageSent=false,latestSnapshot=lease.snapshot,latestInstructions=lease.instructions;
+    const teacherSamples=new ClassroomConnectionSamples();
+    let teacherProbeTimer:ReturnType<typeof setInterval>|undefined,teacherProbeTimeout:ReturnType<typeof setTimeout>|undefined;
+    let teacherProbePending:{nonce:string;sentAt:number}|undefined;
+
     const toolsSeen = new Set<string>(), history: { role: 'child' | 'teacher'; text: string }[] = [];
     const pendingDelegations = new Map<string, { contextKey: string; timer: ReturnType<typeof setTimeout> }>();
     let utterance = '', utteranceKey = `${lease.id}:${lease.epoch}:${stepIndex}`, utteranceOverflow = false;
@@ -136,6 +142,23 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       try { socket.send(typeof event === 'string' ? event : JSON.stringify(event)); return true; } catch { return false; }
     };
     const toClient = (event: unknown) => send(client, event);
+    const teacherQuality=(quality:typeof teacherSamples.value)=>toClient({type:'connection.quality',link:'teacher',quality});
+    const missedTeacherProbe=(nonce:string)=>{
+      if(stopped||teacherProbePending?.nonce!==nonce)return;
+      if(teacherProbeTimeout)clearTimeout(teacherProbeTimeout);teacherProbeTimeout=undefined;teacherProbePending=undefined;
+      teacherQuality(teacherSamples.missed());
+    };
+    const probeTeacher=()=>{
+      if(stopped||!ready||teacherProbePending||upstream?.readyState!==WebSocket.OPEN)return;
+      const nonce=`cq_${randomUUID()}`;teacherProbePending={nonce,sentAt:performance.now()};
+      teacherProbeTimeout=setTimeout(()=>missedTeacherProbe(nonce),options.connectionProbeTimeoutMs??CLASSROOM_CONNECTION_TIMEOUT_MS);
+      try{upstream.ping(nonce,undefined,error=>{if(error)missedTeacherProbe(nonce);});}catch{missedTeacherProbe(nonce);}
+    };
+    const stopTeacherChecks=()=>{
+      if(teacherProbeTimer)clearInterval(teacherProbeTimer);teacherProbeTimer=undefined;
+      if(teacherProbeTimeout)clearTimeout(teacherProbeTimeout);teacherProbeTimeout=undefined;teacherProbePending=undefined;
+      teacherQuality(teacherSamples.reset());
+    };
     const append = (kind: 'thinking' | 'commentary', content: string, delegationId: string | null = null) => {
       const chunks = kind === 'thinking' ? contextChunks(content) : [spokenUpdate(content)];
       let accepted = true, lastId = '';
@@ -151,7 +174,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     const stop = (code?: ClassroomVoiceErrorCode) => {
       if (closePromise) return closePromise;
       unsubscribeRefresh();
-      stopped = true; vision?.close(); timers.forEach(timer => clearTimeout(timer)); timers.clear(); clearInterval(heartbeatTimer); clearInterval(pingTimer);
+      stopped = true; stopTeacherChecks(); vision?.close(); timers.forEach(timer => clearTimeout(timer)); timers.clear(); clearInterval(heartbeatTimer); clearInterval(pingTimer);
       outputPacer.close();
       clearGptOutputGate();
       resetUtterance();
@@ -382,6 +405,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
       ready = true; clearTimeout(startup);
       toClient({ type: 'ready', inputSampleRate: lease.provider === 'qwen' ? 16000 : 24000, outputSampleRate: 24000 });
       toClient({ type: 'snapshot', classroom: lease.snapshot });
+      teacherQuality(teacherSamples.value);probeTeacher();teacherProbeTimer=setInterval(probeTeacher,options.connectionProbeMs??CLASSROOM_CONNECTION_INTERVAL_MS);
       speak(lease.initialCue);
     };
     const providerStarted = async (sessionId: unknown, configure: boolean) => {
@@ -496,7 +520,7 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
         }
       }
     };
-    let alive = true;
+    let alive = true,lastQualityPingAt=-Infinity;
     client.on('pong', () => { alive = true; });
     const pingTimer = setInterval(() => {
       if (!alive) { client.terminate(); void stop(); return; }
@@ -546,11 +570,17 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     client.on('message', (data, binary) => {
       if (stopped) return;
       if (Date.now() - windowStart >= 1000) { windowStart = Date.now(); messages = 0; frames = 0; }
-      if (++messages > 24) { fail('input_rate_limited'); return; }
       if (binary) { fail('protocol_error'); return; }
       const event = json(data);
       const messageBytes=Array.isArray(data)?Buffer.concat(data).length:data instanceof ArrayBuffer?data.byteLength:data.length;
       if(event?.type!=='vision.frame'&&messageBytes>32768){fail('protocol_error');return;}
+      // A bounded monitoring message has its own one-per-second budget.
+      if(event?.type==='ping'&&event.nonce!==undefined){
+        if(!bounded(event.nonce,64)||!/^[A-Za-z0-9_-]+$/.test(event.nonce)){fail('protocol_error');return;}
+        if(!ready||Date.now()-lastQualityPingAt<1000)return;
+        lastQualityPingAt=Date.now();toClient({type:'pong',nonce:event.nonce});return;
+      }
+      if (++messages > 24) { fail('input_rate_limited'); return; }
       if(event&&typeof event.type==='string'&&event.type.startsWith('vision.')){if(ready)void vision?.handle(event);return;}
       if (!event || !['audio', 'text', 'ping', 'close', 'mute'].includes(String(event.type))) { fail('protocol_error'); return; }
       if (event.type === 'close') { void stop(); return; }
@@ -579,6 +609,11 @@ export function attachClassroomSockets(server: Server, options: ClassroomSocketO
     });
     try {
       upstream = (options.connect ?? ((url, headers) => new WebSocket(url, { headers, maxPayload: 512_000, handshakeTimeout: 15000, perMessageDeflate: false })))(endpoint, { Authorization: `Bearer ${config.key}`, ...(lease.provider === 'openai' ? { 'OpenAI-Safety-Identifier': createHash('sha256').update(lease.id).digest('hex') } : {}) });
+      upstream.on('pong',data=>{
+        const pending=teacherProbePending;if(stopped||!ready||!pending||data.toString()!==pending.nonce)return;
+        teacherProbePending=undefined;if(teacherProbeTimeout)clearTimeout(teacherProbeTimeout);teacherProbeTimeout=undefined;
+        teacherQuality(teacherSamples.record(performance.now()-pending.sentAt));
+      });
       upstream.on('message', handleUpstream);
       upstream.on('error', () => fail('transport_error'));
       upstream.on('close', () => { finish(); void stop(stopped ? undefined : 'upstream_closed'); });
