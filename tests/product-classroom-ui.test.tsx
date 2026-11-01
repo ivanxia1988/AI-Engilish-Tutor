@@ -120,6 +120,13 @@ test('failed exit save keeps the classroom visible and never navigates away',asy
  fireEvent.click(screen.getByRole('button',{name:'退出课堂'}));fireEvent.click(screen.getByRole('button',{name:'保存并退出'}));
  await waitFor(()=>check(screen.getByRole('alert').textContent?.includes('保存失败')));assert.deepEqual(destinations,[]);check(screen.getByRole('dialog',{name:'退出确认'}));
 });
+test('a saved terminal snapshot clears leave protection immediately, before effect cleanup',async()=>{
+ const f=fixture();render(<Classroom classroomId={snapshot.id} voiceFactory={f.voiceFactory} checkMicrophone={f.checkMicrophone}/>);
+ await waitFor(()=>check(screen.getByRole('button',{name:'检查麦克风'})));await startCameraTestLesson();
+ const before=new window.Event('beforeunload',{cancelable:true});window.dispatchEvent(before);assert.equal(before.defaultPrevented,true);
+ f.emit({...snapshot,status:'ended',revision:20,endReason:'manual',endedAt:'2026-11-01T00:01:00Z'});
+ const after=new window.Event('beforeunload',{cancelable:true});window.dispatchEvent(after);assert.equal(after.defaultPrevented,false);
+});
 test('connection badges distinguish measured quality and never show good before measurement',async()=>{
  const f=fixture();let callback:((value:{link:'device'|'teacher';quality:{status:'checking'|'good'|'fair'|'poor'|'unavailable';rttMs:number|null}})=>void)|undefined;
  const factory:import('../components/product/classroom').VoiceFactory=options=>{callback=(options as typeof options&{onConnectionQuality?:typeof callback}).onConnectionQuality;return f.voiceFactory(options);};

@@ -123,7 +123,7 @@ export function Classroom({classroomId,voiceFactory,checkMicrophone=checkClassro
  useEffect(()=>{if(snapshot?.status==='paused'&&voice.current)void stopMedia();},[snapshot?.status,stopMedia]);
  useEffect(()=>{
   if(!snapshot||snapshot.status==='ended')return;
-  const leave=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue='';};window.addEventListener('beforeunload',leave);return()=>window.removeEventListener('beforeunload',leave);
+  const leave=(event:BeforeUnloadEvent)=>{if(ended.current)return;event.preventDefault();event.returnValue='';};window.addEventListener('beforeunload',leave);return()=>window.removeEventListener('beforeunload',leave);
  },[snapshot?.status]);
  useEffect(()=>{if(endDialog)continueButton.current?.focus();},[endDialog]);
  async function reload(){const result=await readClassroom(classroomId);accept(result.classroom);return result.classroom;}
