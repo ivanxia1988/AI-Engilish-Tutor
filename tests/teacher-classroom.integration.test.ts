@@ -78,3 +78,26 @@ test('semantic assessment judges stored learner evidence instead of trusting the
  const result=await f.service.tool(f.owner,c.id,c.epoch,c.ownerToken,'submit_spoken_answer',{contextKey:c.key,answer:'the tool echoed something else'});
  assert.equal(result.snapshot.stepIndex,9);assert.equal(result.snapshot.outcomes.length,1);
 });
+test('semantic assessment receives the adapted classroom support state',{skip:!database},async t=>{
+ let received:Parameters<TeacherAssessment>[0]|undefined;
+ const f=await fixture(t,async input=>{received=input;return response;}),c=await speaking(f);
+ await f.pool.query("UPDATE teeko_classrooms SET teaching_state=$2 WHERE id=$1",[c.id,JSON.stringify({level:'sentences',evidence:['independent'],hints:{},digressionTurns:0})]);
+ await f.service.receiveTranscript(f.owner,c.id,c.epoch,c.ownerToken,{role:'child',final:true,text:'I will bring sandwiches.',itemId:'adapted',contextKey:c.key});
+ assert.equal(received?.snapshot.profile.level,'starter');assert.equal(received?.teachingState?.level,'sentences');
+});
+test('normal expressions mentioning circles or highlights reach semantic assessment for transcript and delegate paths',{skip:!database},async t=>{
+ for(const name of ['submit_spoken_answer','delegate'])for(const text of ['I will bring circle-shaped sandwiches.','The highlight of my picnic will be sandwiches.','我会带圈圈形的三明治。']){
+  let count=0;const f=await fixture(t,async()=>{count++;return response;}),c=await speaking(f);
+  await f.service.transcript(f.owner,c.id,c.epoch,c.ownerToken,{role:'child',final:true,text,itemId:'normal-expression',contextKey:c.key});
+  const state=await f.service.tool(f.owner,c.id,c.epoch,c.ownerToken,name,{contextKey:c.key,answer:text});
+  assert.equal(count,1,text);assert.equal(state.snapshot.stepIndex,9,text);assert.deepEqual(state.snapshot.teacherObjectIds,[]);
+ }
+});
+test('explicit annotation requests still highlight the object instead of becoming assessed answers',{skip:!database},async t=>{
+ for(const text of ['Circle the apple.','Please highlight the banana.','Can you circle the apple, please?','请帮我圈出苹果。']){
+  let count=0;const f=await fixture(t,async()=>{count++;return response;}),c=await speaking(f);
+  await f.service.transcript(f.owner,c.id,c.epoch,c.ownerToken,{role:'child',final:true,text,itemId:'annotation',contextKey:c.key});
+  const state=await f.service.tool(f.owner,c.id,c.epoch,c.ownerToken,'delegate',{contextKey:c.key});
+  assert.equal(count,0,text);assert.equal(state.snapshot.stepIndex,8,text);assert.equal(state.output.status,'confirmed',text);assert.equal(state.snapshot.teacherObjectIds.length,1,text);
+ }
+});

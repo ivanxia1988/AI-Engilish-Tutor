@@ -27,6 +27,19 @@ type AssessmentFlight={itemId:string;contextKey:string;controller:AbortControlle
 const fail=(code:string,message:string,status=409):never=>{throw new ClassroomError(code,message,status);};
 const day=(now:Date)=>new Date(now.getTime()+8*3600000).toISOString().slice(0,10);
 const normalize=normalizeClassroomSpeech;
+/** Only a complete request about known page objects is an annotation command. */
+function requestedHighlights(text:string,course:PublishedCourse,pageId:string):string[]|null{
+  const objects=course.pages.find(page=>page.id===pageId)?.objects??[];
+  const escape=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const target=objects.flatMap(item=>[item.label,item.chinese]).map(value=>escape(normalize(value))).filter(Boolean).join('|');
+  if(!target)return null;
+  const object=`(?:(?:the|this|that|an?) )?(?:${target})`;
+  const english=new RegExp(`^(?:(?:can|could|would) you )?(?:please )?(?:circle|highlight|mark) ${object}(?: and ${object}){0,4}(?: please)?$`);
+  const chinese=new RegExp(`^(?:请)?(?:帮我)?(?:(?:圈出|圈一下|标出|标注)(?:${target})|(?:把)?(?:${target})(?:圈出来|圈一下|标出来|标注一下))$`);
+  const input=normalize(text);
+  if(!english.test(input)&&!chinese.test(input))return null;
+  return objects.filter(item=>new RegExp(`\\b${escape(normalize(item.label))}\\b`).test(input)||input.includes(item.chinese)).map(item=>item.id);
+}
 export class ClassroomService {
   private now:()=>Date; private maxMs:number; private dailyMs:number;
   private assess?:TeacherAssessment;private assessments=new Map<string,AssessmentFlight>();
@@ -120,10 +133,10 @@ export class ClassroomService {
       if(row.status!=='active'||row.connection_epoch!==epoch||row.owner_token!==token||data.contextKey!==`${id}:${epoch}:${row.step_index}`||!row.teacher_config?.routes[row.preferences.provider]?.reasoning)return null;
       const course=await this.course(db,row),step=course.steps[row.step_index];if(step?.kind!=='speak')return null;
       const recent=(await db.query("SELECT item_id,text,created_at FROM teeko_classroom_transcripts WHERE classroom_id=$1 AND connection_epoch=$2 AND role='child' AND step_index=$3 AND consumed=false AND created_at>$4 ORDER BY (item_id=$5) DESC,created_at DESC LIMIT 1",[id,epoch,row.step_index,new Date(this.now().getTime()-60000),readTeachingState(row.teaching_state,row.profile.level).latestInput?.itemId??''])).rows[0];
-      if(!recent||(data.evidenceItemId&&data.evidenceItemId!==recent.item_id)||classroomControl(recent.text)||/circle|highlight|圈|标/.test(normalize(recent.text)))return null;
+      if(!recent||(data.evidenceItemId&&data.evidenceItemId!==recent.item_id)||classroomControl(recent.text)||requestedHighlights(recent.text,course,step.pageId))return null;
       const contextKey=`${id}:${epoch}:${row.step_index}`;
       const saved=(await db.query('SELECT decision FROM teeko_teaching_decisions WHERE classroom_id=$1 AND connection_epoch=$2 AND item_id=$3',[id,epoch,recent.item_id])).rows[0];
-      return{itemId:recent.item_id as string,contextKey,createdAt:recent.created_at as Date,text:recent.text as string,config:row.teacher_config,snapshot:await this.snapshot(db,row),saved:saved?teacherAssessmentResultSchema.parse(saved.decision):null};
+      return{itemId:recent.item_id as string,contextKey,createdAt:recent.created_at as Date,text:recent.text as string,config:row.teacher_config,teachingState:readTeachingState(row.teaching_state,row.profile.level),snapshot:await this.snapshot(db,row),saved:saved?teacherAssessmentResultSchema.parse(saved.decision):null};
     });
     if(!captured)return null;
     if(captured.saved)return{itemId:captured.itemId,contextKey:captured.contextKey,createdAt:captured.createdAt,result:captured.saved};
@@ -136,7 +149,7 @@ export class ClassroomService {
       const cancelled=new Promise<never>((_resolve,reject)=>{rejectAbort=()=>reject(new Error('Assessment cancelled.'));});
       controller.signal.addEventListener('abort',rejectAbort,{once:true});const timeout=setTimeout(()=>controller.abort(),8000);
       try{
-        const result=teacherAssessmentResultSchema.parse(await Promise.race([this.assess!({snapshot:captured.snapshot,config:captured.config,text:captured.text},controller.signal),cancelled]));
+        const result=teacherAssessmentResultSchema.parse(await Promise.race([this.assess!({snapshot:captured.snapshot,config:captured.config,text:captured.text,teachingState:captured.teachingState},controller.signal),cancelled]));
         if(controller.signal.aborted)return null;
         return{itemId:captured.itemId,contextKey:captured.contextKey,createdAt:captured.createdAt,result};
       }catch{return null;}
@@ -238,9 +251,9 @@ export class ClassroomService {
     if(data.evidenceItemId&&data.evidenceItemId!==recent?.item_id){await this.save(db,row);return{output:{status:'unavailable'},snapshot:await this.snapshot(db,row)};}
     let output:{status:string;english?:string;highlighted?:string[]}={status:'unavailable',english:'That check is unavailable. Continue with the current picture; do not claim to have inspected unknown marks.'};
     if(name==='delegate'){
-      const spoken=recent?.text??'';const normalized=normalize(spoken);
+      const spoken=recent?.text??'';const highlights=requestedHighlights(spoken,course,step.pageId);
       if(classroomControl(spoken)==='skip'&&recent){name='skip';}
-      else if(/circle|highlight|圈|标/.test(normalized)&&recent){name='highlight_objects';data.objectIds=course.pages[0].objects.filter(x=>normalized.includes(x.label)||normalized.includes(x.chinese)).map(x=>x.id);}
+      else if(highlights?.length&&recent){name='highlight_objects';data.objectIds=highlights;}
       else if(step.kind==='speak'&&recent){name='submit_spoken_answer';data.answer=spoken;}
       else output={status:'conversation',english:'This is conversation, not an assessed answer. Respond to what the learner said and follow their interest. Do not demand the current target or infer a request to skip.'};
     }

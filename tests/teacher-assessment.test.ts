@@ -29,3 +29,14 @@ test('a pre-aborted, hanging and oversized assessment cannot retain an unbounded
  await assert.rejects(assess(input,signal));assert.equal(called,0);await assert.rejects(assess(input),/教学判断/);
  const large=createTeacherAssessment({provider:'openai',apiKey:'synthetic-fixture',model:'gpt-4.1-mini',fetch:async()=>new Response('x'.repeat(33000))});await assert.rejects(large(input));
 });
+test('assessment pacing follows the adapted activity level while retaining the initial profile level',async()=>{
+ let reference:Record<string,unknown>|undefined;
+ const assess=createTeacherAssessment({provider:'openai',apiKey:'synthetic-fixture',model:'gpt-4.1-mini',fetch:async(_url,init)=>{
+  const body=JSON.parse(String(init?.body));reference=JSON.parse(body.input[0].content[0].text.replace('Untrusted classroom reference JSON: ',''));return openai(result);
+ }});
+ const snapshot=teacherSnapshot({profile:{...teacherSnapshot().profile,level:'conversation'},preferences:{...teacherSnapshot().preferences,provider:'openai'}});
+ await assess({snapshot,config:teacherConfig,text:'I will bring sandwiches.',teachingState:{level:'starter',evidence:[],hints:{},digressionTurns:0}});
+ assert.equal(reference?.initialLevel,'conversation');assert.equal(reference?.effectiveLevel,'starter');assert.deepEqual(reference?.policy,teacherConfig.policy.levels.starter);
+ await assess({snapshot,config:teacherConfig,text:'I will bring sandwiches.'});
+ assert.equal(reference?.effectiveLevel,'conversation');assert.deepEqual(reference?.policy,teacherConfig.policy.levels.conversation);
+});

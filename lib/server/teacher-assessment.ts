@@ -1,8 +1,8 @@
 import type {ClassroomSnapshot} from '../classroom-contract';
 import type {FrozenTeacherConfig} from '../teacher-agent';
-import {teacherAssessmentResultSchema,type TeacherAssessmentResult} from '../teacher-instructions';
+import {readTeachingState,teacherAssessmentResultSchema,type TeacherAssessmentResult,type TeacherTeachingState} from '../teacher-instructions';
 export type {TeacherAssessmentResult} from '../teacher-instructions';
-export type TeacherAssessmentInput={snapshot:ClassroomSnapshot;config:FrozenTeacherConfig;text:string};
+export type TeacherAssessmentInput={snapshot:ClassroomSnapshot;config:FrozenTeacherConfig;text:string;teachingState?:TeacherTeachingState};
 export type TeacherAssessment=(input:TeacherAssessmentInput,signal?:AbortSignal)=>Promise<TeacherAssessmentResult>;
 type Options={provider:'qwen'|'openai';apiKey:string;model:string;workspaceId?:string;region?:string;fetch?:typeof globalThis.fetch;timeoutMs?:number};
 const unavailable=()=>new Error('教学判断暂时不可用，请继续自然交流。');
@@ -42,7 +42,8 @@ export function createTeacherAssessment(options:Options):TeacherAssessment{
  return async(input,signal= new AbortController().signal)=>{
   const snapshot=input.snapshot,step=snapshot.course.steps[snapshot.stepIndex],route=input.config.routes[options.provider];
   if(signal.aborted||snapshot.preferences.provider!==options.provider||!route?.reasoning||route.reasoning.model!==options.model||typeof input.text!=='string'||!input.text.trim()||input.text.length>1000||!step)throw unavailable();
-  const reference={task:{id:step.id,kind:step.kind,goal:step.english,expected:step.expected},courseObjectives:snapshot.course.objectives,knownObjects:snapshot.course.pages.find(page=>page.id===step.pageId)?.objects.map(item=>({label:item.label,chinese:item.chinese})),level:snapshot.profile.level,language:snapshot.preferences.language,teacherStyle:snapshot.preferences.style,teacherPersona:input.config.systemPrompt,correction:input.config.policy.correction,policy:input.config.policy.levels[snapshot.profile.level==='conversation'||snapshot.profile.level==='sentences'?snapshot.profile.level:'starter'],text:input.text};
+  const effectiveLevel=readTeachingState(input.teachingState,snapshot.profile.level).level;
+  const reference={task:{id:step.id,kind:step.kind,goal:step.english,expected:step.expected},courseObjectives:snapshot.course.objectives,knownObjects:snapshot.course.pages.find(page=>page.id===step.pageId)?.objects.map(item=>({label:item.label,chinese:item.chinese})),initialLevel:snapshot.profile.level,effectiveLevel,language:snapshot.preferences.language,teacherStyle:snapshot.preferences.style,teacherPersona:input.config.systemPrompt,correction:input.config.policy.correction,policy:input.config.policy.levels[effectiveLevel],text:input.text};
   const controller=new AbortController();let rejectAbort:()=>void=()=>{};const cancelled=new Promise<never>((_resolve,reject)=>{rejectAbort=()=>reject(unavailable());});
   const abort=()=>{controller.abort();rejectAbort();};signal.addEventListener('abort',abort,{once:true});const timer=setTimeout(abort,timeoutMs);
   try{
