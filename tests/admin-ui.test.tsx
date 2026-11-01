@@ -9,8 +9,9 @@ const {render,screen,fireEvent,waitFor,cleanup,act}=await import('@testing-libra
 const {AdminConsole}=await import('../components/admin/admin-console');
 afterEach(cleanup);after(()=>dom.window.close());
 const date='2026-11-01T00:00:00Z',agentId='30000000-0000-4000-8000-000000000001',releaseId='40000000-0000-4000-8000-000000000001';
-function fixture(options:{failWrite?:boolean;unauthorized?:boolean}={}){
+function fixture(options:{failWrite?:boolean;unauthorized?:boolean;invalidBinding?:'provider'|'purpose'|'disabled'|'missing'}={}){
  const models:TeacherModel[]=DEFAULT_TEACHER_MODELS.map(item=>({...item.input,id:item.id,revision:1,createdAt:date,updatedAt:date}));
+ if(options.invalidBinding){if(options.invalidBinding==='provider')models[0].provider='openai';if(options.invalidBinding==='purpose')models[0].purpose='reasoning';if(options.invalidBinding==='disabled')models[0].enabled=false;if(options.invalidBinding==='missing')models.shift();models.push({...DEFAULT_TEACHER_MODELS[0].input,id:'20000000-0000-4000-8000-000000000099',name:'替代实时模型',revision:1,createdAt:date,updatedAt:date});}
  let agent:TeacherAgent={...structuredClone(DEFAULT_TEACHER_AGENT),id:agentId,revision:1,createdAt:date,updatedAt:date};
  const release={id:releaseId,agentId,agentName:agent.name,version:1,publishedAt:date};
  const calls:{url:string;method:string;body:unknown}[]=[];
@@ -104,4 +105,14 @@ test('a delayed tryout cannot display the previous answer after input changes',a
  fireEvent.change(screen.getByLabelText('模拟孩子的回答'),{target:{value:'I want to talk about football.'}});
  await act(async()=>{resolve!(Response.json({ok:true,result:{decision:'conversation',confidence:'high',reason:'OLD_RESULT',suggestedResponse:'Old dinosaur reply.',nextAction:'follow_topic'}}));await new Promise(done=>setTimeout(done,0));});
  assert.equal(screen.queryByText('OLD_RESULT'),null);assert.equal(screen.queryByText('Old dinosaur reply.'),null);
+});
+
+for(const invalidBinding of ['provider','purpose','disabled','missing'] as const)test(`an invalid ${invalidBinding} binding stays visible and requires an explicit replacement before publish`,async()=>{
+ const f=fixture({invalidBinding});render(<AdminConsole/>);await openAgents();fireEvent.click(screen.getByRole('tab',{name:'模型与声音'}));
+ const select=screen.getByLabelText('通义实时对话模型');assert(select instanceof dom.window.HTMLSelectElement);
+ assert.equal(select.value,DEFAULT_TEACHER_AGENT.routes.qwen.realtimeModelId);assert(select.selectedOptions[0].disabled);assert.match(select.selectedOptions[0].textContent??'',/当前绑定已失效/);
+ assert((screen.getByRole('button',{name:'发布上线'}) as HTMLButtonElement).disabled);assert(screen.getByText('存在失效的模型绑定，请在“模型与声音”中重新选择后保存。'));
+ fireEvent.change(select,{target:{value:'20000000-0000-4000-8000-000000000099'}});await clickAsync(screen.getByRole('button',{name:'保存草稿'}));
+ await waitFor(()=>assert(!(screen.getByRole('button',{name:'发布上线'}) as HTMLButtonElement).disabled));
+ const saved=f.calls.find(item=>item.method==='PATCH'&&item.url.endsWith(`/agents/${agentId}`));assert.equal((saved?.body as {routes:TeacherAgent['routes']}).routes.qwen.realtimeModelId,'20000000-0000-4000-8000-000000000099');
 });
