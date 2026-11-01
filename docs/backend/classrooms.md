@@ -83,3 +83,7 @@ GPT Live持续输出含静音的PCM，不能把有音频包等同老师正在发
 picnic当前新建使用v2，v1发布不变，旧会话按原版本运行；如旧课仍未结束，先完成/结束它，再从课程页新开。v2练习后进入自由交流，不凭一句目标词或聊天中的next/another自动跳题；只有明确答题证据才进度和奖励。单课900秒/每日3600秒限制不变。老师系统指令与切题cue都允许题外话和自然停顿，不强迫重复。
 
 `GET /api/v1/courses`新增`recentClassrooms`（最多6条，按结束时间倒序，绑定保存的课程版本），详情沿用账号归属校验。结束课堂同路由立即显示事实小结，刷新后可恢复；小结只由实际outcomes派生，无新数据库表、模型调用或报告任务。完整异步AI报告继续未开放。实施及验证见[本轮记录](../plans/2026-11-01-classroom-experience-fixes.md)。
+
+## 连接延迟质量
+
+现有WS增加有界nonce ping/pong测设备到课堂；Node对上游WS发control ping、校验同nonce pong测老师服务链路。`connection.quality`仅下行teacher结果，device由浏览器单调时钟计算；quality含status与rttMs。每5秒、8秒无响应降较差，不直接关媒体；最近三次中位数<250ms良好、<800ms一般、其他较差，未测检测中。正常每秒首条nonce检测独立计量，超额请求仍进入原消息限流，不绕过保护。断线/结束清理timer和旧结果，不存遥测，不把延迟说成下载速度。实际两家短连接检查均有pong，结果仅代表本地当次链路。见[验证记录](../plans/2026-11-01-classroom-stage-cleanup.md)。
