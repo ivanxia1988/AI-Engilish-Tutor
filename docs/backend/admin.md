@@ -22,6 +22,8 @@
 
 Railway前置命令为`node --import tsx scripts/prepare-production.ts`：迁移0001–0005、初始化教师配置、仅在管理员不存在时从私有ADMIN_BOOTSTRAP_PASSWORD创建、导入尚无记录的默认凭据。已有管理员不因重复部署或残留bootstrap变量而轮换密码/会话；用户名统一规范化。bootstrap变量使用Railway CLI标准输入私下传递，首次上线后移除，不放源码或日志。正式数据库为Railway内网Postgres，不同步本地验收账号。
 
+当前Railway已弃用`railway.json`/`railway.toml`，新服务不能启用该方式；仓库旧JSON不作为本服务部署事实来源。已通过平台配置显式设置Dockerfile路径、`node scripts/run-node-framework.mjs start`、上述preDeploy、`/api/health`及120秒超时。修改这些字段后必须部署才生效，容器启动不等于数据库就绪；迁移缺失时健康检查503。后续若采用版本化基础设施，按[官方IaC迁移说明](https://docs.railway.com/infrastructure-as-code#migrating-from-config-as-code)另行维护，不导出密钥到配置文件。
+
 `AdminService`保存模型和智能体草稿revision；发布时原子解析正确服务/用途的启用绑定，冻结完整model/policy/prompt为不可变release，单一active指针；回退切换到历史release。课堂创建在同事务冻结release到teacher_config，公共snapshot不返回私有提示/模型配置。旧课堂null配置保留兼容。teaching_state只调整当前课堂支持程度，不永久覆盖孩子档案。
 
 语义判断先持久化完整输入，在事务外请求模型，返回后重新校验任务/话轮/epoch/租约/授权/有效期。同话轮幂等，迟到结果不能推进新题，低置信度不记答对。请求和响应、超时、并发有界，供应商失败不关语音；保守规则只作为安全兜底，不虚构掌握或评分。图片/人脸不用于成绩。

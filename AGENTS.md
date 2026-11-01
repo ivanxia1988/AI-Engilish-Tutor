@@ -120,3 +120,4 @@
 - 用户已要求后台按模型动态设置API key并部署Railway，覆盖旧环境限定。密钥仅经专用凭据API写入，加密PG独立表；元数据、release、snapshot、GET和浏览器WS事件都不得含明文。保存后下个请求/媒体重连取新值，严格同供应商/用途。
 - 稳定AUTH_SECRET同时按用途派生凭据保护key，不随部署轮换；恢复环境默认保留revision墓碑，不让启动导入覆盖运营配置。错误保护key/篡改/跨模型或provider失败关闭。
 - Railway准备命令scripts/prepare-production.ts迁移/幂等初始化，已存在管理员不轮换。ADMIN_BOOTSTRAP_PASSWORD只经私有环境/标准输入临时提供并在初次上线后移除；禁止HTTP初始化或把本地验收账号复制到线上。
+- 正式后台admin.teeko.app已上线，线上PG独立、代码固定69cd7c3（见最新发布记录）。Railway已弃用新设railway.json配置，当前使用平台显式start/preDeploy/health/Dockerfile设置；复用旧部署可能沿用旧manifest，从默认源重发曾误取main，必须核对部署SHA和实际迁移日志/健康。临时bootstrap变量已移除，不为后续部署重新添加或重置管理员。
