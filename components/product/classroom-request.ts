@@ -14,7 +14,7 @@ export const classroomSnapshotSchema: z.ZodType<ClassroomSnapshot> = z.object({
  outcomes:z.array(z.object({stepId:z.string(),status:z.enum(['independent','assisted','skipped','unassessed'])})),teacherObjectIds:z.array(z.string()),feedback:z.object({id:z.string(),kind:z.enum(['correct','retry','ambiguous','hint','skipped']),message:z.string()}).nullable(),endReason:z.enum(['manual','content_completed','time_limit','daily_limit']).nullable(),startedAt:z.string(),endedAt:z.string().nullable(),reportStatus:z.literal('unavailable')
 });
 const card: z.ZodType<CourseCard> = z.object({...courseFields,progress:z.object({stepIndex:z.number().int().nonnegative(),completed:z.boolean()})});
-export const coursesResponse = z.object({ok:z.literal(true),courses:z.array(card),activeClassroom:z.object({id:classroomId,courseId:z.string(),status:z.string()}).nullable().default(null)});
+export const coursesResponse = z.object({ok:z.literal(true),courses:z.array(card),activeClassroom:z.object({id:classroomId,courseId:z.string(),status:z.string()}).nullable().default(null),recentClassrooms:z.array(z.object({id:classroomId,courseTitle:z.string(),endedAt:z.string(),endReason:z.enum(['manual','content_completed','time_limit','daily_limit']),elapsedSeconds:z.number().nonnegative()})).max(6).default([])});
 export const classroomResponse = z.object({ok:z.literal(true),classroom:classroomSnapshotSchema});
 export const classroomOptionsResponse = z.object({ok:z.literal(true),providers:z.array(z.object({id:z.enum(['qwen','openai']),name:z.string(),configured:z.boolean()})),preferences:classroomPreferencesSchema});
 export const savedPreferencesResponse = z.object({ok:z.literal(true),preferences:classroomPreferencesSchema});

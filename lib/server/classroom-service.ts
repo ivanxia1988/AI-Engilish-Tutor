@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { classroomControl, normalizeClassroomSpeech, spokenTaskAttempt } from './classroom-teaching';
-import type { ClassroomAction, ClassroomFeedback, ClassroomOutcome, ClassroomPreferences, ClassroomSnapshot, CourseCard, PublishedCourse } from '../classroom-contract';
+import type { ClassroomAction, ClassroomFeedback, ClassroomOutcome, ClassroomPreferences, ClassroomSnapshot, CourseCard, PublishedCourse, RecentClassroom } from '../classroom-contract';
 
 export class ClassroomError extends Error {
   constructor(public code:string,message:string,public status=409){super(message);}
@@ -78,7 +78,9 @@ export class ClassroomService {
       return {...card,progress:{stepIndex:last?.step_index??0,completed:last?.end_reason==='content_completed'}};
     });
     const current=active.rows.find(row=>row.status!=='ended');
-    return {courses,activeClassroom:current?{id:current.id,courseId:current.course_id,status:current.status}:null};
+    const ended=await db.query("SELECT r.id,r.end_reason,r.ended_at,r.elapsed_ms,c.manifest->>'title' AS course_title FROM teeko_classrooms r JOIN teeko_courses c ON c.id=r.course_id AND c.version=r.course_version WHERE r.account_id=$1 AND r.status='ended' AND r.ended_at IS NOT NULL ORDER BY r.ended_at DESC,r.recorded_at DESC LIMIT 6",[accountId]);
+    const recentClassrooms:RecentClassroom[]=ended.rows.map(row=>({id:row.id,courseTitle:row.course_title,endedAt:row.ended_at.toISOString(),endReason:row.end_reason,elapsedSeconds:Math.floor(Number(row.elapsed_ms)/1000)}));
+    return {courses,activeClassroom:current?{id:current.id,courseId:current.course_id,status:current.status}:null,recentClassrooms};
   });}
   async create(accountId:string,courseId:string,preferences?:ClassroomPreferences){return this.tx(accountId,async db=>{
     const unfinished=await db.query("SELECT * FROM teeko_classrooms WHERE account_id=$1 AND status<>'ended' FOR UPDATE",[accountId]);

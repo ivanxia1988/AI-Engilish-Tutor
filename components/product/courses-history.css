@@ -1,0 +1,14 @@
+.tk-recent-classrooms{margin-top:24px}
+.tk-recent-classrooms>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.tk-recent-classrooms h2{margin:0;font-size:18px}
+.tk-recent-classrooms>header>div{display:flex;align-items:center;gap:10px;font-size:12px}
+.tk-recent-classrooms button{min-height:44px;padding:8px;border:1px solid var(--tk-border,#dfd4c4);border-radius:8px;background:#fff}
+.tk-recent-classrooms button:disabled{opacity:.45}
+.tk-recent-classroom-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.tk-recent-classroom-grid>a{display:grid;grid-template-columns:1fr auto;gap:5px 12px;min-width:0;padding:16px;border:1px solid var(--tk-border,#dfd4c4);border-radius:12px;background:#fff;text-decoration:none;color:inherit}
+.tk-recent-classroom-grid time{grid-column:1/-1;font-size:12px;color:#59637e}
+.tk-recent-classroom-grid strong{grid-column:1/-1;overflow-wrap:anywhere}
+.tk-recent-classroom-grid span{font-size:12px;color:#59637e}
+.tk-recent-classroom-grid small{display:flex;align-items:center;gap:6px;font-size:12px;color:#086f65}
+.tk-recent-classroom-grid a:focus-visible,.tk-recent-classrooms button:focus-visible{outline:3px solid #14998b;outline-offset:3px}
+@media(max-width:740px){.tk-recent-classroom-grid{grid-template-columns:1fr}}

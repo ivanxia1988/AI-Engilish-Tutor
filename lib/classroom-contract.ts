@@ -39,3 +39,7 @@ export type ClassroomAction = {
   type: 'select' | 'hint' | 'next' | 'skip' | 'pause' | 'resume' | 'end';
   objectIds?: string[];
 };
+export type RecentClassroom = {
+  id:string; courseTitle:string; endedAt:string;
+  endReason:NonNullable<ClassroomSnapshot['endReason']>; elapsedSeconds:number;
+};
